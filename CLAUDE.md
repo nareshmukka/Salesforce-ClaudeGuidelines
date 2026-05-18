@@ -16,6 +16,7 @@ manifest/                  <- Deployment manifests
 scripts/                   <- Utility scripts
 .claude/                   <- Claude agent definitions
 .codex/                    <- Codex agent definitions
+.amazonq/                  <- Amazon Q project rules
 ```
 
 > **docs/ is reference material.** Read a docs file only when you need business context or architecture background for a specific task -- not as a routine pre-task step. If a lead/architect creates a task-specific working note under `docs/`, that file becomes active context for that requirement.
@@ -104,6 +105,20 @@ sf project deploy start \
   --target-org <target-env-alias> \
   --dry-run --test-level RunLocalTests --wait 60
 ```
+
+---
+
+## Claude Agent Team Rules
+
+- Default entry point remains `claude-sf-lead` for non-trivial work.
+- Use Claude subagents by default.
+- Use Claude agent teams only when parallel collaboration adds real value.
+- Do not manually create `.claude/teams` config files.
+- Use `.claude/agents` as reusable role definitions.
+- Lead must create a Context Packet before delegation or team prompt.
+- Full team/pipeline is required for high-risk Salesforce work.
+- Reference `salesforce-ai-skills/agent-teams/CLAUDE_AGENT_TEAM_PLAYBOOK.md`.
+- Amazon Q rules are separate and should not be mixed into Claude subagent definitions.
 
 ---
 

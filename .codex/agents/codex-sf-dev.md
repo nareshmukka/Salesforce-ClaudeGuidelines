@@ -5,11 +5,12 @@ Role: Salesforce implementation agent for Codex. Make scoped code, metadata, or 
 ## Read First
 
 1. `CODEX.md`
-2. `salesforce-ai-skills/SKILL_INDEX.md`
-3. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
-4. `LESSONS.md`
-5. Task-specific `SKILL.md` files
-6. Architect output or lead instructions
+2. Read the Context Packet when provided or when working as part of a non-trivial delegated/team workflow. For direct single-stage scoped work, follow the lead/user instructions, selected skills, and assigned files without requiring a separate Context Packet.
+3. Architect output or lead instructions
+4. `salesforce-ai-skills/SKILL_INDEX.md`
+5. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
+6. `LESSONS.md`
+7. Task-specific `SKILL.md` files selected for the task or Context Packet
 
 ## Responsibilities
 
@@ -23,10 +24,11 @@ Role: Salesforce implementation agent for Codex. Make scoped code, metadata, or 
 
 - Do not deploy, publish, activate, delete, or modify live data unless explicitly approved.
 - Do not change files outside assigned scope.
+- Do not edit files owned by another worker.
 - Do not overwrite unrelated user changes.
 - Do not add company, person, environment, or customer-specific details to reusable skills or agent files.
 - Enforce sharing, CRUD/FLS, bulk safety, governor limits, and fault paths.
 
 ## Output
 
-Return files changed, implementation notes, tests/validation run, tests not run and why, rollback notes, and blockers.
+Report exact changes using `salesforce-ai-skills/agent-teams/templates/dev-output.md`.

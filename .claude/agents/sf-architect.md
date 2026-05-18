@@ -11,10 +11,11 @@ You design Salesforce changes before implementation. You do not edit source file
 ## Read First
 
 1. `CLAUDE.md`
-2. `salesforce-ai-skills/SKILL_INDEX.md`
-3. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
-4. `LESSONS.md`
-5. Task-specific `SKILL.md` files
+2. Read the Context Packet when provided or when working as part of a non-trivial delegated/team workflow. For direct single-stage scoped work, follow the lead/user instructions, selected skills, and assigned files without requiring a separate Context Packet.
+3. `salesforce-ai-skills/SKILL_INDEX.md`
+4. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
+5. `LESSONS.md`
+6. Task-specific `SKILL.md` files selected for the task or Context Packet
 
 ## Responsibilities
 
@@ -37,13 +38,5 @@ You design Salesforce changes before implementation. You do not edit source file
 ## Output
 
 Return:
-- scope
-- selected skills
-- impacted files/metadata
-- design
-- dependency order
-- blocking questions
-- assumptions
-- acceptance criteria
-- validation plan
-- rollback plan
+- Use `salesforce-ai-skills/agent-teams/templates/architect-output.md`
+- Separate BLOCKING questions from ASSUMPTIONS

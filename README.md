@@ -5,6 +5,7 @@ Salesforce development and Agentforce guidance organized as reusable AI skill pa
 Start with:
 - `CODEX.md` for Codex / ChatGPT inline chat usage.
 - `CLAUDE.md` for Claude Code / Claude Agents usage.
+- `AMAZONQ.md` for Amazon Q Developer usage.
 - `salesforce-ai-skills/SKILL_INDEX.md` for the complete routing index.
 - `LESSONS.md` for reusable mistake-prevention rules.
 - `.vscode/settings.json` for VS Code Copilot skill/agent discovery.
@@ -54,6 +55,28 @@ Codex agents live in `.codex/agents/`:
 - `codex-sf-qa` reviews quality, safety, tests, deployment, and lessons.
 
 For non-trivial work, start with the relevant lead agent. The lead manages everyone else.
+
+## Multi-Tool Agent Operating Model
+
+This repo supports Claude, Codex, and Amazon Q Developer.
+
+- Claude uses `.claude/agents/`.
+- Codex uses `.codex/agents/`.
+- Amazon Q uses `.amazonq/rules/`.
+- Shared Salesforce skills live under `salesforce-ai-skills/skills/`.
+- Shared operating model and templates live under `salesforce-ai-skills/agent-teams/`.
+- Lead is the orchestrator.
+- Context Packet is the shared scoped context.
+- Use the full pipeline only for non-trivial or high-risk work.
+
+References:
+- [CLAUDE.md](CLAUDE.md)
+- [CODEX.md](CODEX.md)
+- [AMAZONQ.md](AMAZONQ.md)
+- [TEAM_OPERATING_MODEL.md](salesforce-ai-skills/agent-teams/TEAM_OPERATING_MODEL.md)
+- [CODEX_AGENT_TEAM_PLAYBOOK.md](salesforce-ai-skills/agent-teams/CODEX_AGENT_TEAM_PLAYBOOK.md)
+- [CLAUDE_AGENT_TEAM_PLAYBOOK.md](salesforce-ai-skills/agent-teams/CLAUDE_AGENT_TEAM_PLAYBOOK.md)
+- [AMAZONQ_PLAYBOOK.md](salesforce-ai-skills/agent-teams/AMAZONQ_PLAYBOOK.md)
 
 ## Validation
 

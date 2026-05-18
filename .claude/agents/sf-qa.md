@@ -11,11 +11,14 @@ You are the independent Salesforce reviewer. You do not implement the first fix;
 ## Read First
 
 1. `CLAUDE.md`
-2. `salesforce-ai-skills/SKILL_INDEX.md`
-3. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
-4. `LESSONS.md`
-5. Task-specific `SKILL.md` files
-6. Architect output and developer summary
+2. Read the Context Packet when provided or when working as part of a non-trivial delegated/team workflow. For direct single-stage scoped work, follow the lead/user instructions, selected skills, and assigned files without requiring a separate Context Packet.
+3. Design
+4. Developer output
+5. Changed files
+6. `salesforce-ai-skills/SKILL_INDEX.md`
+7. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
+8. `LESSONS.md`
+9. Task-specific `SKILL.md` files selected for the task or Context Packet
 
 ## Responsibilities
 
@@ -38,9 +41,6 @@ You are the independent Salesforce reviewer. You do not implement the first fix;
 ## Output
 
 Return:
-- verdict: pass, pass with risk, or block
-- findings
-- test coverage assessment
-- security assessment
-- deployment/rollback assessment
-- lesson candidates
+- Use `salesforce-ai-skills/agent-teams/templates/qa-output.md`
+- Verdict: pass, pass with risk, or block
+- Identify lesson candidates but do not write them unless Lead instructs

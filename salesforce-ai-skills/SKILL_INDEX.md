@@ -2,6 +2,8 @@
 
 This index is generated from each skill folder. Agents should use it for routing, then open the linked `SKILL.md`.
 
+Claude, Codex, and Amazon Q should use this index for task-specific skill selection. Do not read all skills by default. Use a Context Packet for non-trivial multi-agent work. Amazon Q project rules should point to this index instead of duplicating all skill content.
+
 ## Execution Rule
 
 1. Read `salesforce-global-development/SKILL.md` first.

@@ -10,9 +10,19 @@ $docsToCheck = @(
     "README.md",
     "CODEX.md",
     "CLAUDE.md",
+    "AMAZONQ.md",
     "LESSONS.md",
     ".vscode\settings.json",
     "salesforce-ai-skills\SKILL_INDEX.md",
+    "salesforce-ai-skills\agent-teams\TEAM_OPERATING_MODEL.md",
+    "salesforce-ai-skills\agent-teams\CODEX_AGENT_TEAM_PLAYBOOK.md",
+    "salesforce-ai-skills\agent-teams\CLAUDE_AGENT_TEAM_PLAYBOOK.md",
+    "salesforce-ai-skills\agent-teams\AMAZONQ_PLAYBOOK.md",
+    "salesforce-ai-skills\agent-teams\templates\context-packet.md",
+    ".amazonq\rules\salesforce-global-rules.md",
+    ".amazonq\rules\salesforce-agent-operating-model.md",
+    ".amazonq\rules\salesforce-skill-routing.md",
+    ".amazonq\rules\salesforce-safety-gates.md",
     ".claude\agents\claude-sf-lead.md",
     ".claude\agents\sf-architect.md",
     ".claude\agents\sf-dev.md",
@@ -208,6 +218,24 @@ if (Test-Path $skillsRoot) {
     foreach ($name in $skillNames) {
         if ($index -notmatch [regex]::Escape($name)) {
             Add-Error "SKILL_INDEX.md does not list $name."
+        }
+    }
+}
+
+$referenceChecks = @(
+    @{ Path = "README.md"; Text = "TEAM_OPERATING_MODEL.md" },
+    @{ Path = "README.md"; Text = "AMAZONQ.md" },
+    @{ Path = "CODEX.md"; Text = "CODEX_AGENT_TEAM_PLAYBOOK.md" },
+    @{ Path = "CLAUDE.md"; Text = "CLAUDE_AGENT_TEAM_PLAYBOOK.md" },
+    @{ Path = "AMAZONQ.md"; Text = "AMAZONQ_PLAYBOOK.md" }
+)
+
+foreach ($check in $referenceChecks) {
+    $path = Join-Path $repo $check.Path
+    if (Test-Path $path) {
+        $text = Get-Content -Raw -LiteralPath $path
+        if ($text -notmatch [regex]::Escape($check.Text)) {
+            Add-Error "$($check.Path) must reference $($check.Text)."
         }
     }
 }

@@ -5,11 +5,14 @@ Role: Salesforce QA/review agent for Codex. Review implementation against design
 ## Read First
 
 1. `CODEX.md`
-2. `salesforce-ai-skills/SKILL_INDEX.md`
-3. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
-4. `LESSONS.md`
-5. Task-specific `SKILL.md` files
-6. Architect output and developer summary
+2. Read the Context Packet when provided or when working as part of a non-trivial delegated/team workflow. For direct single-stage scoped work, follow the lead/user instructions, selected skills, and assigned files without requiring a separate Context Packet.
+3. Architect output
+4. Developer output
+5. Changed files
+6. `salesforce-ai-skills/SKILL_INDEX.md`
+7. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
+8. `LESSONS.md`
+9. Task-specific `SKILL.md` files selected for the task or Context Packet
 
 ## Responsibilities
 
@@ -26,7 +29,8 @@ Role: Salesforce QA/review agent for Codex. Review implementation against design
 - Do not approve if tests are missing for changed behavior without an explicit risk note.
 - Do not approve deploy/publish/activation without explicit user approval.
 - Block reusable-skill changes that introduce company, person, environment, or customer-specific details.
+- Block on missing tests, security gaps, unsafe deployment behavior, missing rollback, or scope drift.
 
 ## Output
 
-Return verdict, findings, test coverage assessment, security assessment, deployment/rollback assessment, and lesson candidates.
+Use `salesforce-ai-skills/agent-teams/templates/qa-output.md`.

@@ -85,6 +85,18 @@ For structured project work, use the Codex agent definitions under `.codex/agent
 
 Default entry point for non-trivial Codex work: `codex-sf-lead`. The lead manages the other agents; direct worker use is only for single-stage tasks.
 
+## Codex Agent Team Rules
+
+- Default entry point remains `codex-sf-lead`.
+- `codex-sf-lead` must classify task size before delegating.
+- `codex-sf-lead` must create a Context Packet for non-trivial work.
+- Do not invoke Architect/Dev/QA for trivial work.
+- Worker agents must follow selected skills from the Context Packet.
+- Do not let workers independently load broad or unrelated skills.
+- Full pipeline is required for Agentforce, Flow, Integration, Permission, Deployment-sensitive, Data Cloud, Service Assistant, or multi-metadata changes.
+- Reference `salesforce-ai-skills/agent-teams/CODEX_AGENT_TEAM_PLAYBOOK.md`.
+- Amazon Q rules are separate and should not be mixed into Codex agent definitions.
+
 ## Standard inline chat prompts
 ### Review only
 "Read CODEX.md + relevant skills. Review `{targetFile}` only. Do not implement changes. Do not deploy. Report security, bulkification, test gaps, and rollback notes."
