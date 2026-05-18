@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -55,7 +55,7 @@ Design page regions for performance and role-based utility. Use Dynamic Forms/Ac
 
 ### Bad examples / avoid
 1. Single overloaded page for all personas with heavy components.
-2. Activating page globally without sandbox UX validation.
+2. Activating page globally without test environment UX validation.
 
 ## Review checklist
 - [ ] Change scope is minimal and component-appropriate.
@@ -388,7 +388,7 @@ Region (template region: main)
 
 - **Prefer Custom Permission over Profile-based visibility.** Profiles get renamed; permissions are explicit and survive reorgs.
 - Use `{!$Client.FormFactor}` to hide heavy components on phone (`Small`).
-- Test with multiple user types in sandbox before activating to production.
+- Test with multiple user types in test environment before activating to production.
 - Document every visibility rule in the page's `<description>` element.
 
 ---
@@ -627,7 +627,7 @@ No `sobjectType` (the pane is contact/lead-context resolved at runtime, not boun
 
 ## 16. Deployment Dependencies
 
-FlexiPage deployment will fail if any referenced metadata isn't already present in the target org. Order is strict.
+FlexiPage deployment will fail if any referenced metadata isn't already present in the target environment. Order is strict.
 
 ### Deploy order
 
@@ -665,15 +665,15 @@ FlexiPage deployment will fail if any referenced metadata isn't already present 
 sf project deploy start \
   --metadata "FlexiPage:Case_Record_Page_Support" \
   --dry-run \
-  --target-org <alias>
+  --target-org <target-env-alias>
 
 sf project retrieve start \
   --metadata "FlexiPage:Case_Record_Page_Support" \
-  --target-org <alias>
+  --target-org <target-env-alias>
 
 sf data query \
   --query "SELECT Id, MasterLabel, Type, EntityDefinitionId FROM FlexiPage ORDER BY MasterLabel" \
-  --target-org <alias>
+  --target-org <target-env-alias>
 ```
 
 ---
@@ -733,12 +733,12 @@ If the command fails: `sf plugins install templates`, then retry. Do not proceed
 ## 20. Definition of Done
 
 - [ ] All referenced LWC bundles deployed and `isExposed=true` with correct target
-- [ ] All referenced Flows are Active in the target org
+- [ ] All referenced Flows are Active in the target environment
 - [ ] All referenced Custom Permissions deployed
 - [ ] All referenced fields exist on the sObject
 - [ ] `<description>` element documents owner, purpose, assignment context, deploy date
 - [ ] Assignment rules defined (App / RecordType / Profile / FormFactor as appropriate)
-- [ ] Assignment tested in sandbox with a user in each target profile
+- [ ] Assignment tested in test environment with a user in each target profile
 - [ ] Desktop layout validated in App Builder
 - [ ] Phone layout validated -- either responsive or a separate phone FlexiPage authored
 - [ ] Component visibility rules tested with multiple user contexts
@@ -767,7 +767,7 @@ If the command fails: `sf plugins install templates`, then retry. Do not proceed
 
 ## 22. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|

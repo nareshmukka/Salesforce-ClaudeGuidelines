@@ -1,0 +1,14 @@
+{
+  "chat.useAgentSkills": true,
+  "chat.agentSkillsLocations": {
+    ".github/skills": true,
+    ".claude/skills": true,
+    ".agents/skills": true,
+    "salesforce-ai-skills/skills": true
+  },
+  "chat.agentFilesLocations": {
+    ".github/agents": true,
+    ".claude/agents": true,
+    ".codex/agents": true
+  }
+}

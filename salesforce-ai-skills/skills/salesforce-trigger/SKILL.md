@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -144,9 +144,9 @@ Every trigger task response MUST include these sections before any code:
 | 4 | Recursion guard | Static-boolean vs `Set<Id>` vs field-value-comparison -- and why |
 | 5 | Test strategy | Bulk-200 insert/update/delete, change-detection scenarios, recursion test, negative path |
 | 6 | Validation commands | `sf project deploy start --check-only --test-level RunLocalTests` |
-| 7 | Rollback | Prior handler preserved? Metadata dependencies? Plusgrade activation gate |
+| 7 | Rollback | Prior handler preserved? Metadata dependencies? project activation gate |
 
-For Plusgrade PlusGradeFullSB, Section 7 must confirm: **deploy as `status = Draft` for new flows, do NOT deactivate old triggers/flows; activation is manual.**
+For Reusable Salesforce Agent Guidelines, Section 7 must confirm: **deploy as `status = Draft` for new flows, do NOT deactivate old triggers/flows; activation is manual.**
 
 ---
 
@@ -157,11 +157,11 @@ Salesforce does NOT guarantee execution order between multiple triggers on the s
 ### 3.1 Audit before creating anything
 
 ```bash
-sf project retrieve start --metadata "ApexTrigger:CaseTrigger" --target-org <alias>
+sf project retrieve start --metadata "ApexTrigger:CaseTrigger" --target-org <target-env-alias>
 
 sf data query \
    --query "SELECT Name, TableEnumOrId, Status FROM ApexTrigger ORDER BY TableEnumOrId" \
-   --target-org <alias> --result-format human
+   --target-org <target-env-alias> --result-format human
 ```
 
 If a trigger already exists: retrieve it, extend its handler, add the new context to the dispatch switch. **Never create a second trigger file.** Reject any AI output that proposes one.
@@ -208,7 +208,7 @@ The handler routes by `TriggerOperation` enum, owns the recursion guard, delegat
 ```apex
 /**
  * Handler for CaseTrigger. Routes execution by TriggerOperation. Owns recursion guard.
- * Developer: Naresh -- Senior Salesforce Developer
+ * Developer: the release owner -- Salesforce Developer
  */
 public with sharing class CaseTriggerHandler {
 
@@ -416,7 +416,7 @@ public static void onAfterUpdate(List<Case> newList, Map<Id, Case> oldMap) {
 
 ### 8.4 Don't declare contexts you don't handle
 
-Each declared context is a separate trigger invocation per transaction. Declaring `before insert` "for completeness" when no before-insert handler exists is wasted overhead -- and in Plusgrade specifically, before-save logic on Case lives in `Case_BS_Normalize_Case` Flow, not in Apex.
+Each declared context is a separate trigger invocation per transaction. Declaring `before insert` "for completeness" when no before-insert handler exists is wasted overhead -- and in project specifically, before-save logic on Case lives in `Case_BS_Normalize_Case` Flow, not in Apex.
 
 ```apex
 // WRONG -- declares before contexts the handler doesn't own
@@ -480,7 +480,7 @@ public static List<Case> transitionedTo(
 
 ## 10. Trigger + Flow Coexistence
 
-Plusgrade orgs run both triggers and Record-Triggered Flows on the same objects. Coordination is mandatory.
+project orgs run both triggers and Record-Triggered Flows on the same objects. Coordination is mandatory.
 
 ### 10.1 Order of Execution (simplified)
 
@@ -510,8 +510,8 @@ Authoritative order: <https://help.salesforce.com/s/articleView?id=sf.flow_conce
 - **Document ownership.** Every object has a design doc listing which automation owns which behavior. Never two automations doing the same thing.
 - **Change detection in both.** A trigger's recursion guard doesn't help when a Flow legitimately updates a field -- the trigger should still check whether the relevant field changed.
 - **Single owner per child-record type.** If the trigger creates Task records on Case insert, the Flow does not also create Tasks.
-- **Test against active Flows.** A trigger test in a sandbox without the production Flow active does not validate the real interaction.
-- **Plusgrade PlusGradeFullSB:** field normalization on Case lives in `Case_BS_Normalize_Case` (before-save Flow, triggerOrder 10). Do not duplicate that in a before trigger. See `CLAUDE.md` Section 3 for the full ownership table.
+- **Test against active Flows.** A trigger test in a test environment without the production Flow active does not validate the real interaction.
+- **Reusable Salesforce Agent Guidelines:** field normalization on Case lives in `Case_BS_Normalize_Case` (before-save Flow, triggerOrder 10). Do not duplicate that in a before trigger. See `CLAUDE.md` Section 3 for the full ownership table.
 
 ### 10.4 Bypass flag
 
@@ -657,7 +657,7 @@ static void testRecursionGuard_noInfiniteLoop() {
 }
 ```
 
-For Plusgrade PlusGradeFullSB: **test classes are deferred until after sandbox functional testing** (see `CLAUDE.md` Section 3 Still write them -- just don't gate the deploy on them.
+For Reusable Salesforce Agent Guidelines: **test classes are deferred until after test-environment functional testing** (see `CLAUDE.md` Section 3 Still write them -- just don't gate the deploy on them.
 
 ---
 
@@ -677,7 +677,7 @@ For Plusgrade PlusGradeFullSB: **test classes are deferred until after sandbox f
 - [ ] No `@future` methods -- project prohibits them. Use Queueable + `System.Finalizer`.
 - [ ] Test class: bulk-200 per context + recursion + negative + change-detection scenarios.
 - [ ] Check-only deploy passes with `--test-level RunLocalTests`.
-- [ ] For Plusgrade: new flows deploy `status = Draft`; no manual deactivation of old triggers.
+- [ ] For project: new flows deploy `status = Draft`; no manual deactivation of old triggers.
 
 ---
 
@@ -703,23 +703,23 @@ Class names PascalCase. Methods camelCase, verb-first (`onBeforeInsert`, `handle
 # Audit existing triggers
 sf data query \
    --query "SELECT Name, TableEnumOrId, Status FROM ApexTrigger ORDER BY TableEnumOrId" \
-   --target-org PlusGradeFullSB --result-format human
+   --target-org <target-env-alias> --result-format human
 
 # Retrieve current trigger + handler before modifying
 sf project retrieve start \
    --metadata "ApexTrigger:CaseTrigger,ApexClass:CaseTriggerHandler" \
-   --target-org PlusGradeFullSB
+   --target-org <target-env-alias>
 
 # Check-only deploy
 sf project deploy start \
-   --manifest manifest/package-case-flow-optimization.xml \
-   --target-org PlusGradeFullSB \
+   --manifest manifest/package.xml \
+   --target-org <target-env-alias> \
    --dry-run --test-level RunLocalTests --wait 60
 
 # Run a specific test class
 sf apex run test \
    --class-names CaseServiceTest \
-   --target-org PlusGradeFullSB \
+   --target-org <target-env-alias> \
    --result-format human --wait 10
 ```
 
@@ -751,7 +751,7 @@ sf apex run test \
 
 ## 18. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|

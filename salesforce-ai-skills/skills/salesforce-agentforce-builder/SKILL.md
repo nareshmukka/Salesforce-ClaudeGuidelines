@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -53,7 +53,7 @@ Differentiate Builder metadata orchestration from Script behavior definitions. K
 - Switch to Agent Script / authoring-bundle ownership when the work creates or edits `.agent` files, deterministic flow control, script canvas output, or authoring-bundle lifecycle.
 - Keep Builder topics, actions, prompt templates, and permission personas mapped explicitly so deployment and access troubleshooting are not guesswork.
 - Validate action targets and prompt template contracts before publish. Builder UI success does not replace source review or live preview.
-- For ServicePlanner or org-specific Service Assistant work, route to the Service Assistant skill before applying EmployeeAgent assumptions.
+- For ServicePlanner or project-specific Service Assistant work, route to the Service Assistant skill before applying EmployeeAgent assumptions.
 
 ## Examples
 ### Good example patterns
@@ -140,11 +140,11 @@ The Builder Canvas, Builder Script, and CLI all edit the **same** AiAuthoringBun
 | Topic -> Instructions | `subagent.reasoning.instructions` |
 | Topic -> Guardrails | Trailing `\| GUARDRAILS:` block inside `reasoning.instructions:` |
 | Topic -> User Input Examples | Transition `description:` strings in `start_agent` router |
-| Action / Tool | `subagent.actions.<name>` block (definition) + `reasoning.actions.<alias>` (invocation) |
+| Action / Tool | `subagent.actions.<name>` block (definition) + `reasoning.actions.<target-env-alias>` (invocation) |
 | Action -> Input | `inputs.<name>:` |
 | Action -> Output | `outputs.<name>:` |
 | Action -> Target | `target: "apex://X"` / `target: "flow://X"` / `target: "prompt://X"` |
-| Action -> Available when | `available when <expr>` in `reasoning.actions.<alias>` |
+| Action -> Available when | `available when <expr>` in `reasoning.actions.<target-env-alias>` |
 | Variable | `variables.<name>` (mutable or linked) |
 | Knowledge | `knowledge:` block (or per-subagent `knowledge:`) |
 | Language settings | `language:` block |
@@ -482,7 +482,7 @@ subagent identity_verification:
 
 - [ ] All metadata files present in source: `AiAuthoringBundle`, `Bot`, `BotVersion`, `GenAiPlannerBundle` (the last three auto-generated; verify they exist)
 - [ ] No standalone `GenAiPlugin` or `GenAiFunction` files for new authoring-bundle agents
-- [ ] All referenced Flow API names exist as Active Flows in the target org
+- [ ] All referenced Flow API names exist as Active Flows in the target environment
 - [ ] All referenced Apex class names exist with `@InvocableMethod` and are deployed
 - [ ] All variable names in action `description:` text match Flow/Apex parameter names case-sensitively
 - [ ] Every variable declared is referenced by at least one action or instruction
@@ -491,7 +491,7 @@ subagent identity_verification:
 - [ ] No fabricated values in any test scenario response -- grounding traces all GROUNDED
 - [ ] Test conversations: happy path + failed verification + action failure + out-of-scope + edge case
 - [ ] Deployment dependency order: Apex/Flow -> publish authoring bundle -> activate
-- [ ] Activate in sandbox, smoke-test, then activate in production
+- [ ] Activate in test environment, smoke-test, then activate in production
 
 ---
 

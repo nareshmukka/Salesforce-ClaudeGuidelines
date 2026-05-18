@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -46,11 +46,11 @@ Provide independently usable, production-ready assistant guidance for this Sales
 5. Stop short of deploy/publish/activate unless explicitly approved.
 
 ## Salesforce best practices
-Use smallest manifest for change scope. Validate in sandbox/UAT first, then prod gate. Treat destructive changes as separately reviewed artifacts. Quick deploy only from successful validation.
+Use smallest manifest for change scope. Validate in test environment/UAT first, then prod gate. Treat destructive changes as separately reviewed artifacts. Quick deploy only from successful validation.
 
 ## Upstream Salesforce Skill Patterns
 - Use `sf` CLI v2. Prefer `--json` output for any command the assistant must parse.
-- Preflight before deploy: `sf --version`, `sf org list`, `sf org display --target-org <alias> --json`, and confirm `sfdx-project.json`.
+- Preflight before deploy: `sf --version`, `sf org list`, `sf org display --target-org <target-env-alias> --json`, and confirm `sfdx-project.json`.
 - Deploy the smallest correct scope with `--source-dir`, `--metadata`, or `--manifest`; non-source-tracking orgs need explicit scope.
 - Default safe order: custom objects/fields, permission sets, Apex, Flows as Draft, then activation/post-verify.
 - Run dry-run validation first; only deploy after validation succeeds and the user approves the actual org-changing step.
@@ -105,16 +105,16 @@ Use smallest manifest for change scope. Validate in sandbox/UAT first, then prod
 
 Authoritative grammar and workflow for Salesforce metadata deployment in this project, using `sf` CLI v2. Other skill files (`../salesforce-apex/SKILL.md`, `../salesforce-flow/SKILL.md`, `../salesforce-lwc/SKILL.md`, `../salesforce-agentforce-authoring-bundle/SKILL.md`) reference this one for any `sf project deploy` invocation.
 
-**Verified against:** [SFDX Dev Guide](https://developer.salesforce.com/docs/atlas.en-us.sfdx_dev.meta/sfdx_dev/) - [SF CLI command reference](https://developer.salesforce.com/docs/atlas.en-us.sfdx_cli_reference.meta/sfdx_cli_reference/) - [Metadata API Deploy](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_deploy.htm) - [Quick Deploy](https://help.salesforce.com/s/articleView?id=sf.deploy_quick.htm) - `/tmp/sf-skills/skills/deploying-metadata/SKILL.md` (forcedotcom canonical skill, v1.1) - project `.claude/sf-config.json`. Last verified 2026-05-16.
+**Verified against:** [SFDX Dev Guide](https://developer.salesforce.com/docs/atlas.en-us.sfdx_dev.meta/sfdx_dev/) - [SF CLI command reference](https://developer.salesforce.com/docs/atlas.en-us.sfdx_cli_reference.meta/sfdx_cli_reference/) - [Metadata API Deploy](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_deploy.htm) - [Quick Deploy](https://help.salesforce.com/s/articleView?id=sf.deploy_quick.htm) - `/tmp/sf-skills/skills/deploying-metadata/SKILL.md` (forcedotcom canonical skill, v1.1) - project `project configuration`. Last verified 2026-05-16.
 
-> **Project rule (PlusGradeFullSB):** Flows deploy as `status = Draft`. Naresh activates them manually after sandbox validation. Old flows are NOT deactivated by AI agents. See Section 11 1. Project Constants (Read Before Composing Any Command)
+> **Project rule (<target-env-alias>):** Flows deploy as `status = Draft`. the release owner activates them manually after test-environment validation. Old flows are NOT deactivated by AI agents. See Section 11 1. Project Constants (Read Before Composing Any Command)
 
-These values live in `.claude/sf-config.json` -- the single source of truth. Never hardcode them in command templates; agents must read the config file.
+These values live in `project configuration` -- the single source of truth. Never hardcode them in command templates; agents must read the config file.
 
 | Key | Value | Where it appears |
 |---|---|---|
-| `orgAlias` | `PlusGradeFullSB` | `--target-org PlusGradeFullSB` |
-| `manifest` | `manifest/package-case-flow-optimization.xml` | `--manifest manifest/...` |
+| `environmentAlias` | `<target-env-alias>` | `--target-org <target-env-alias>` |
+| `manifest` | `manifest/package.xml` | `--manifest manifest/...` |
 | `currentApiVersion` | `66.0` (Spring '26) | `<version>66.0</version>` in package.xml + `*-meta.xml` |
 | `flowDeployStatus` | `Draft` | Every flow's `<status>Draft</status>` |
 | `doNotActivateNewFlows` | `True` | No `sf flow activate` commands; no `<status>Active</status>` |
@@ -128,12 +128,12 @@ Bump `currentApiVersion` per release: Summer '26 = 67.0, Winter '27 = 68.0.
 
 ## 2. The Canonical Validation Command
 
-This is the command Naresh runs after every significant change. It is the contract between agent output and reviewer.
+This is the command the release owner runs after every significant change. It is the contract between agent output and reviewer.
 
 ```bash
 sf project deploy start \
-  --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB \
+  --manifest manifest/package.xml \
+  --target-org <target-env-alias> \
   --dry-run \
   --test-level RunLocalTests \
   --wait 60
@@ -175,7 +175,7 @@ Run this after any change to Apex, Flow, FlexiPage, Permission Set, or custom fi
 | **Output** | `--json` | Machine-readable. **Required in CI/CD.** |
 | | `--verbose` | Component lists, test results, coverage |
 | | `--concise` | Summary only |
-| **Other** | `--target-org <alias>` | Required for every deploy |
+| **Other** | `--target-org <target-env-alias>` | Required for every deploy |
 | | `--single-package` | MDAPI-format single-package source |
 | | `--api-version <N>` | Override -- avoid; let `sourceApiVersion` drive |
 
@@ -201,15 +201,15 @@ For production, never run a real deploy first. The workflow is:
 
 ```bash
 JOB_ID=$(sf project deploy start \
-  --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB \
+  --manifest manifest/package.xml \
+  --target-org <target-env-alias> \
   --dry-run --test-level RunLocalTests --wait 60 --json | jq -r '.result.id')
 ```
 
 ### Step 2 -- Review
 
 ```bash
-sf project deploy report --job-id $JOB_ID --target-org PlusGradeFullSB --verbose
+sf project deploy report --job-id $JOB_ID --target-org <target-env-alias> --verbose
 ```
 
 Confirm `status: Succeeded`, test failures match the 13-Opportunity baseline (no new failures), all listed components are intentional.
@@ -217,10 +217,10 @@ Confirm `status: Succeeded`, test failures match the 13-Opportunity baseline (no
 ### Step 3 -- Quick Deploy
 
 ```bash
-sf project deploy quick --job-id $JOB_ID --target-org PlusGradeFullSB --wait 30
+sf project deploy quick --job-id $JOB_ID --target-org <target-env-alias> --wait 30
 ```
 
-**Quick deploy rules:** validation must have used `RunLocalTests`/`RunSpecifiedTests`/`RunAllTestsInOrg` (NOT `NoTestRun`). The 10-day window starts at validation completion. If anything changed in the org or package since validation, re-validate.
+**Quick deploy rules:** validation must have used `RunLocalTests`/`RunSpecifiedTests`/`RunAllTestsInOrg` (NOT `NoTestRun`). The 10-day window starts at validation completion. If anything changed in the target environment or package since validation, re-validate.
 
 ---
 
@@ -238,13 +238,13 @@ sf project deploy quick --job-id $JOB_ID --target-org PlusGradeFullSB --wait 30
 
 ```bash
 # Most recent deploy status
-sf project deploy report --use-most-recent --target-org PlusGradeFullSB
+sf project deploy report --use-most-recent --target-org <target-env-alias>
 
 # Resume polling on an async deploy
-sf project deploy resume --job-id 0AfXXXXXXXXXXXX --target-org PlusGradeFullSB --wait 60
+sf project deploy resume --job-id 0AfXXXXXXXXXXXX --target-org <target-env-alias> --wait 60
 
 # Cancel an in-progress deploy
-sf project deploy cancel --job-id 0AfXXXXXXXXXXXX --target-org PlusGradeFullSB
+sf project deploy cancel --job-id 0AfXXXXXXXXXXXX --target-org <target-env-alias>
 ```
 
 ---
@@ -255,9 +255,9 @@ The test level controls which Apex tests run during deployment. Wrong choice = e
 
 | Level | Behavior | When to use |
 |---|---|---|
-| `NoTestRun` | Skip all tests | Developer sandbox only. **NEVER in production or UAT.** |
+| `NoTestRun` | Skip all tests | Developer test environment only. **NEVER in production or UAT.** |
 | `RunSpecifiedTests` | Run only the classes named in `--tests` | Targeted hotfix when you can prove the listed classes cover all deployed Apex (>=75%) |
-| `RunLocalTests` | Run all tests in the org EXCEPT managed-package tests | **Default for this project.** Required for prod. |
+| `RunLocalTests` | Run all tests in the target environment EXCEPT managed-package tests | **Default for this project.** Required for prod. |
 | `RunAllTestsInOrg` | Run every test including managed-package tests | Use when you specifically need full org test confirmation |
 
 **Production gate:** Use `RunLocalTests` or `RunAllTestsInOrg`. Anything else fails the platform's production deploy guard.
@@ -270,7 +270,7 @@ The test level controls which Apex tests run during deployment. Wrong choice = e
 
 ## 7. `package.xml` Structure
 
-The manifest declares everything the deploy will touch. `manifest/package-case-flow-optimization.xml` is the project's canonical manifest.
+The manifest declares everything the deploy will touch. `manifest/package.xml` is the project's canonical manifest.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -301,7 +301,7 @@ The manifest declares everything the deploy will touch. `manifest/package-case-f
 
 - Every `<types>` block has exactly one `<name>` and one or more `<members>`.
 - Member names are **API names**, case-sensitive, no display names. For nested metadata, use parent prefix: `Case.Resolution_Notes__c`, `Case.CustomerService` (record type), `Case-Case Layout` (layout, hyphen separator).
-- `<version>` matches `currentApiVersion` from `.claude/sf-config.json` (66.0 for Spring '26).
+- `<version>` matches `currentApiVersion` from `project configuration` (66.0 for Spring '26).
 - Avoid `<members>*</members>` in production manifests -- wildcards inflate the package and risk deploying unintended components.
 - **Never mix additive and destructive components** in one `package.xml`. Destructive items belong in a separate `destructiveChanges.xml`.
 
@@ -309,10 +309,10 @@ The manifest declares everything the deploy will touch. `manifest/package-case-f
 
 ```bash
 # Single-component verify
-sf project retrieve start --metadata "ApexClass:CaseTriggerHandler" --target-org PlusGradeFullSB --output-dir /tmp/verify/
+sf project retrieve start --metadata "ApexClass:CaseTriggerHandler" --target-org <target-env-alias> --output-dir /tmp/verify/
 
-# List all flows in the org
-sf project retrieve start --metadata "Flow:*" --target-org PlusGradeFullSB --output-dir /tmp/flows/
+# List all flows in the target environment
+sf project retrieve start --metadata "Flow:*" --target-org <target-env-alias> --output-dir /tmp/flows/
 ```
 
 ---
@@ -341,19 +341,19 @@ Salesforce metadata has hard dependencies. Out-of-order deploys fail with `INVAL
 
 - **Objects + fields first** -- everything else (RTs, layouts, flows, Apex, LWC, perm sets) references them.
 - **Record types before page layouts** -- layouts assign RTs.
-- **CMDT type before CMDT records** -- records can't deploy until the type is in the org.
+- **CMDT type before CMDT records** -- records can't deploy until the type is in the target environment.
 - **Apex triggers + classes together** -- handlers reference services; deploy as one set to resolve cross-references.
-- **Subflows before parent flows** -- `LogError_Subflow` and any reusable subflow must be in the org before its caller. This is the #1 flow deployment failure.
+- **Subflows before parent flows** -- `LogError_Subflow` and any reusable subflow must be in the target environment before its caller. This is the #1 flow deployment failure.
 - **LWC before FlexiPages and Screen Flows** that embed them.
 - **Permission Sets after Apex** -- they reference Apex classes for access grants. PermissionSetGroups after component PermissionSets.
 
-For this project, all Case flow migration metadata is in a single manifest (`package-case-flow-optimization.xml`) -- multi-wave is reserved for larger releases.
+For this project, all Salesforce delivery guidance metadata is in a single manifest (`package-case-flow-optimization.xml`) -- multi-wave is reserved for larger releases.
 
 ---
 
 ## 9. `destructiveChanges.xml` -- Component Deletion
 
-Use destructive changes ONLY when components must be permanently removed. Naresh approves all destructive deploys in this project.
+Use destructive changes ONLY when components must be permanently removed. the release owner approves all destructive deploys in this project.
 
 ### File format -- same structure as package.xml
 
@@ -384,14 +384,14 @@ Use destructive changes ONLY when components must be permanently removed. Naresh
 sf project deploy start \
   --manifest manifest/empty_package.xml \
   --post-destructive-changes manifest/destructiveChanges.xml \
-  --target-org PlusGradeFullSB \
+  --target-org <target-env-alias> \
   --wait 30
 
 # Combined -- deploy new components AND delete old ones in one operation
 sf project deploy start \
-  --manifest manifest/package-case-flow-optimization.xml \
+  --manifest manifest/package.xml \
   --post-destructive-changes manifest/destructiveChanges.xml \
-  --target-org PlusGradeFullSB \
+  --target-org <target-env-alias> \
   --test-level RunLocalTests \
   --wait 60
 ```
@@ -401,8 +401,8 @@ sf project deploy start \
 - **NEVER delete a custom field that contains data** without a documented data migration plan. Field deletion is permanent.
 - **NEVER delete a Flow that is active or has running interviews.** Deactivate first, drain interviews, then delete.
 - **NEVER delete an Apex class that is referenced** by Flow `apex://` actions, other classes, Visualforce pages, or permission sets.
-- Architect or Naresh signs off on every destructive deploy.
-- Test destructive changes in `PlusGradeFullSB` before any other env.
+- Architect or the release owner signs off on every destructive deploy.
+- Test destructive changes in `<target-env-alias>` before any other env.
 
 ---
 
@@ -412,19 +412,19 @@ Always retrieve current state BEFORE deploying changes that overlap with existin
 
 ```bash
 # Manifest-based retrieve (default backup pattern)
-sf project retrieve start --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB --output-dir force-app/main/default
+sf project retrieve start --manifest manifest/package.xml \
+  --target-org <target-env-alias> --output-dir force-app/main/default
 
 # Single-component inspect
 sf project retrieve start --metadata "Flow:Case_AS_Routing" \
-  --target-org PlusGradeFullSB --output-dir /tmp/inspect/
+  --target-org <target-env-alias> --output-dir /tmp/inspect/
 
 # Pre-deploy timestamped backup (the immediate rollback source)
-sf project retrieve start --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB --output-dir backup/pre-deploy-$(date +%Y%m%d-%H%M)/
+sf project retrieve start --manifest manifest/package.xml \
+  --target-org <target-env-alias> --output-dir backup/pre-deploy-$(date +%Y%m%d-%H%M)/
 
 # Preview without acting
-sf project retrieve preview --target-org PlusGradeFullSB
+sf project retrieve preview --target-org <target-env-alias>
 ```
 
 ---
@@ -434,11 +434,11 @@ sf project retrieve preview --target-org PlusGradeFullSB
 Strict flow lifecycle policy that overrides default deploy behavior:
 
 1. **New flows deploy as `<status>Draft</status>`.** Every new `.flow-meta.xml` MUST have `<status>Draft</status>`. AI agents do not emit `<status>Active</status>`.
-2. **Naresh activates new flows manually** in Flow Builder UI after sandbox functional testing.
-3. **Old flows are NOT deactivated by AI agents.** Migration runs old + new in parallel; Naresh deactivates old flows manually after production validation.
+2. **the release owner activates new flows manually** in Flow Builder UI after test-environment functional testing.
+3. **Old flows are NOT deactivated by AI agents.** Migration runs old + new in parallel; the release owner deactivates old flows manually after production validation.
 4. **No `sf flow activate` commands** in agent output.
 
-**Why:** Sandbox validation needs old + new flows simultaneously to compare behavior. Activation is a human-gate decision. Draft flows can be safely removed; Active flows with running interviews cannot.
+**Why:** Test-environment validation needs old + new flows simultaneously to compare behavior. Activation is a human-gate decision. Draft flows can be safely removed; Active flows with running interviews cannot.
 
 ### Pre-deploy compliance check
 
@@ -452,14 +452,14 @@ grep -L "<status>Draft</status>"  force-app/main/default/flows/Case_BS_*.flow-me
 
 ## 12. Expected Test Failure Baseline
 
-`.claude/sf-config.json` documents: **13 pre-existing Opportunity test failures are expected and do not block Case deployment.** Every `RunLocalTests` validation surfaces them. They are NOT caused by Case flow migration changes.
+`project configuration` documents: **13 pre-existing Opportunity test failures are expected and do not block Case deployment.** Every `RunLocalTests` validation surfaces them. They are NOT caused by Salesforce delivery guidance changes.
 
 ### Health check on a validation report
 
 - Count Opportunity-test failures:
   - Exactly 13 -> proceed.
   - More than 13 -> new regression -- stop and investigate (out of scope but may signal a disturbed shared dependency).
-  - Fewer than 13 -> someone fixed something. Update the baseline in `.claude/sf-config.json` and proceed.
+  - Fewer than 13 -> someone fixed something. Update the baseline in `project configuration` and proceed.
 
 ### What this baseline does NOT license
 
@@ -471,10 +471,10 @@ grep -L "<status>Draft</status>"  force-app/main/default/flows/Case_BS_*.flow-me
 
 ## 13. Source Tracking
 
-Source tracking auto-detects changes between local source and the org. Available in scratch orgs and source-tracked sandboxes; not in production. Confirm before relying on `preview`:
+Source tracking auto-detects changes between local source and the org. Available in scratch orgs and source-tracked test environmentes; not in production. Confirm before relying on `preview`:
 
 ```bash
-sf org display --target-org PlusGradeFullSB --json | jq '.result.tracksSource'
+sf org display --target-org <target-env-alias> --json | jq '.result.tracksSource'
 # false -> manifest-based deploys only (the project default)
 
 # When source-tracking is enabled:
@@ -507,7 +507,7 @@ Every deploy plan must include a rollback approach BEFORE execution.
 
 | Component | Rollback pattern |
 |---|---|
-| Apex Class / Trigger | `git checkout <prev> -- force-app/main/default/classes/X.cls X.cls-meta.xml` then `sf project deploy start --metadata "ApexClass:X" --target-org PlusGradeFullSB` |
+| Apex Class / Trigger | `git checkout <prev> -- force-app/main/default/classes/X.cls X.cls-meta.xml` then `sf project deploy start --metadata "ApexClass:X" --target-org <target-env-alias>` |
 | Flow (Draft in this project) | Delete the Draft flow via destructive change OR redeploy prior version from git. Old flows remain ACTIVE during migration -> customers never lose coverage. |
 | Permission Set | Redeploy prior `.permissionset-meta.xml` from git via `--metadata "PermissionSet:X"` |
 | Custom Field | Fields with data cannot be cleanly removed -- prefer config-level mitigation (visibility, validation) over deletion |
@@ -524,19 +524,19 @@ For automated pipelines, scope commands narrowly and always emit JSON.
 ```bash
 # Auth (JWT bearer flow)
 sf org login jwt --client-id $SF_CLIENT_ID --jwt-key-file server.key \
-  --username $SF_USERNAME --alias PlusGradeFullSB
+  --username $SF_USERNAME --alias <target-env-alias>
 
 # PR validation
-sf project deploy start --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB --dry-run --test-level RunLocalTests \
+sf project deploy start --manifest manifest/package.xml \
+  --target-org <target-env-alias> --dry-run --test-level RunLocalTests \
   --wait 60 --json | tee validation.json
 JOB_ID=$(jq -r '.result.id' validation.json)
 
 # Quick deploy after manual approval
-sf project deploy quick --job-id $JOB_ID --target-org PlusGradeFullSB --wait 30 --json
+sf project deploy quick --job-id $JOB_ID --target-org <target-env-alias> --wait 30 --json
 ```
 
-**Branch strategy:** `feature/*` -> dry-run only on PlusGradeFullSB; `main` -> full validation + Naresh-approved quick deploy.
+**Branch strategy:** `feature/*` -> dry-run only on <target-env-alias>; `main` -> full validation + the release owner-approved quick deploy.
 
 ---
 
@@ -561,28 +561,28 @@ Failure to include any section is non-compliant.
 
 ```bash
 # Project-default validation
-sf project deploy start --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB --dry-run --test-level RunLocalTests --wait 60
+sf project deploy start --manifest manifest/package.xml \
+  --target-org <target-env-alias> --dry-run --test-level RunLocalTests --wait 60
 
 # Quick deploy after validation
-sf project deploy quick --job-id 0AfXXXXXXXXXXXX --target-org PlusGradeFullSB --wait 30
+sf project deploy quick --job-id 0AfXXXXXXXXXXXX --target-org <target-env-alias> --wait 30
 
 # Pre-deploy backup
-sf project retrieve start --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB --output-dir backup/prod-$(date +%Y%m%d)/
+sf project retrieve start --manifest manifest/package.xml \
+  --target-org <target-env-alias> --output-dir backup/prod-$(date +%Y%m%d)/
 
 # Status + cancel
-sf project deploy report --use-most-recent --target-org PlusGradeFullSB
-sf project deploy cancel --job-id 0AfXXXXXXXXXXXX --target-org PlusGradeFullSB
+sf project deploy report --use-most-recent --target-org <target-env-alias>
+sf project deploy cancel --job-id 0AfXXXXXXXXXXXX --target-org <target-env-alias>
 
 # Targeted test validation
-sf project deploy start --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB --dry-run --test-level RunSpecifiedTests \
+sf project deploy start --manifest manifest/package.xml \
+  --target-org <target-env-alias> --dry-run --test-level RunSpecifiedTests \
   --tests CaseTriggerHandlerTest,CaseEscalationServiceTest --wait 60
 
 # Single-component hotfix
 sf project deploy start --metadata "ApexClass:CaseEscalationService" \
-  --target-org PlusGradeFullSB --test-level RunSpecifiedTests \
+  --target-org <target-env-alias> --test-level RunSpecifiedTests \
   --tests CaseEscalationServiceTest --wait 15
 ```
 
@@ -595,12 +595,12 @@ The following are errors that AI agents frequently make when generating deployme
 | # | Mistake | Correct Approach |
 |---|---|---|
 | 1 | Wrong dependency order -- Flow deployed before its custom fields; FlexiPage before its LWC; Permission Set before the Apex it grants access to | Resolve dependency order before building the manifest; deploy infrastructure metadata first |
-| 2 | Using `NoTestRun` for production deployments | Always use `RunLocalTests` or higher for production; `NoTestRun` is sandbox-only |
+| 2 | Using `NoTestRun` for production deployments | Always use `RunLocalTests` or higher for production; `NoTestRun` is test environment-only |
 | 3 | Mixing additive and destructive changes in one manifest | Isolate destructiveChanges.xml; deploy destructive changes separately and with explicit approval |
 | 4 | Quick deploy without a prior check-only validation | Always run `--check-only` first; only quick-deploy after a successful validation within the 10-day window |
 | 5 | No rollback plan documented | Every deployment plan must include a documented rollback procedure before execution |
-| 6 | Deploying Named Credentials without verifying callout connectivity | Named Credentials may require manual secret/credential setup in the target org after metadata deployment -- verify connectivity post-deploy |
-| 7 | Deploying Flows that reference inactive or missing subflows | LogError_Subflow and all called subflows must be active in the target org before the calling flow is deployed |
+| 6 | Deploying Named Credentials without verifying callout connectivity | Named Credentials may require manual secret/credential setup in the target environment after metadata deployment -- verify connectivity post-deploy |
+| 7 | Deploying Flows that reference inactive or missing subflows | LogError_Subflow and all called subflows must be active in the target environment before the calling flow is deployed |
 | 8 | Not retrieving the current production state before deploying | Always retrieve a backup and commit it to source control before modifying production |
 | 9 | Incorrect member names -- display names instead of API names; wrong parent object prefix on fields | Use API names throughout; double-check field names include the object prefix (e.g. `Case.Status`) |
 | 10 | Omitting test classes from package.xml | Test classes must be included in the manifest alongside the Apex code they test |
@@ -611,7 +611,7 @@ The following are errors that AI agents frequently make when generating deployme
 
 ## 20. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 *(No entries yet -- add a row the first time a deployment surfaces a docs vs reality gap.)*
 
@@ -629,10 +629,10 @@ When Salesforce's documented approach doesn't work in this org, the workaround g
 - [Metadata Coverage Report](https://developer.salesforce.com/docs/metadata-coverage)
 - [Salesforce CLI Release Notes (GitHub)](https://github.com/forcedotcom/cli/releases)
 - `forcedotcom/sf-skills/deploying-metadata/SKILL.md` (v1.1, the canonical CLI v2 skill -- bundled at `/tmp/sf-skills/skills/deploying-metadata/`)
-- Project config: `.claude/sf-config.json` (org alias, manifest, API version, expected test failures)
-- Project policy: `CLAUDE.md` Section 3 Case flow migration rules -- Draft status, no AI activation, baseline test failures)
+- Project config: `project configuration` (target environment alias, manifest, API version, expected test failures)
+- Project policy: `CLAUDE.md` Section 3 Salesforce delivery guidance rules -- Draft status, no AI activation, baseline test failures)
 
 ---
 
-*Deployment Guidelines | v3.0 | Last verified 2026-05-16 | PlusGradeFullSB | API v66.0 (Spring '26)*
+*Deployment Guidelines | v3.0 | Last verified 2026-05-16 | <target-env-alias> | API v66.0 (Spring '26)*
 

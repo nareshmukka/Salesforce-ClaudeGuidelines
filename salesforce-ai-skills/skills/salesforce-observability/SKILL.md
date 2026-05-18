@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -94,11 +94,11 @@ Generate/request correlation ID per transaction. Classify errors (validation/int
 
 # Observability & Logging Guidelines
 
-Authoritative rules for logging, error tracing, and operational visibility across Apex, Flow, LWC, and integrations in the Plusgrade PlusGradeFullSB org.
+Authoritative rules for logging, error tracing, and operational visibility across Apex, Flow, LWC, and integrations in the Reusable Salesforce Agent Guidelines org.
 
 **Verified against:** the deployed `AppLogger.cls` and `AppLoggerTest.cls` in `force-app/main/default/classes/`, the `Agent_Activity_Log__c` schema in `force-app/main/default/objects/`, [forcedotcom/sf-skills `debugging-apex-logs`](https://github.com/forcedotcom/sf-skills/tree/main/skills/debugging-apex-logs), [Apex Developer Guide -- Debug Log](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_debugging_debug_log.htm), [System.Logger class](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_class_System_Logger.htm), [Platform Events](https://developer.salesforce.com/docs/atlas.en-us.platform_events.meta/platform_events/), [Real-Time Event Monitoring](https://help.salesforce.com/s/articleView?id=sf.real_time_event_monitoring_overview.htm). Last verified 2026-05-16.
 
-> **Project reality check (read this first).** The deployed `AppLogger` in this org is a **single-method shim** that writes to the existing `Agent_Activity_Log__c` custom object. It is NOT the multi-method `AppLog__c` design that earlier drafts of this file imagined. Match the deployed signature: `AppLogger.log(context, AppLogger.Severity, message, recordId)`. If a future task requires a richer logger, expand the shim -- do not invent calls (`AppLogger.info`, `AppLogger.error(... Exception)`, `AppLogger.generateCorrelationId`) that don't exist.
+> **Project reality check (read this first).** The deployed `AppLogger` in the target environment is a **single-method shim** that writes to the existing `Agent_Activity_Log__c` custom object. It is NOT the multi-method `AppLog__c` design that earlier drafts of this file imagined. Match the deployed signature: `AppLogger.log(context, AppLogger.Severity, message, recordId)`. If a future task requires a richer logger, expand the shim -- do not invent calls (`AppLogger.info`, `AppLogger.error(... Exception)`, `AppLogger.generateCorrelationId`) that don't exist.
 
 ---
 
@@ -201,12 +201,12 @@ These are commonly imagined methods that **do not exist** in `AppLogger.cls`. Do
 
 If a feature genuinely needs one of these, add it to `AppLogger.cls` and update this section. Do not write code that assumes them.
 
-### Fallback when `AppLogger` is not in the target org
+### Fallback when `AppLogger` is not in the target environment
 
-`AppLogger` is a project-internal class, not a managed package or native API. Before referencing it in any new class, verify it exists in the target org (`sf project retrieve start --metadata ApexClass:AppLogger ...`). If absent, use Apex's built-in `System.debug` with explicit level and add a TODO:
+`AppLogger` is a project-internal class, not a managed package or native API. Before referencing it in any new class, verify it exists in the target environment (`sf project retrieve start --metadata ApexClass:AppLogger ...`). If absent, use Apex's built-in `System.debug` with explicit level and add a TODO:
 
 ```apex
-// TODO: replace with AppLogger.log once it is deployed to this org
+// TODO: replace with AppLogger.log once it is deployed to the target environment
 System.debug(LoggingLevel.ERROR, 'GetCaseContextAction.execute | ' + e.getMessage());
 ```
 
@@ -520,7 +520,7 @@ Use a Platform Event (`AppLogEvent__e`) only when logs must leave the org in nea
 |---|---|
 | In-org operational visibility (reports, dashboards, alerts) | `Agent_Activity_Log__c` via `AppLogger.log` (current default) |
 | External SIEM / log aggregator near real-time | `EventBus.publish(new AppLogEvent__e(...))` -- subscribed by external CometD client |
-| Cross-sandbox aggregation | Platform Event published to a central org's API |
+| Cross-test environment aggregation | Platform Event published to a central org's API |
 
 A Platform Event is fire-and-forget; subscribers may miss events if Replay IDs fall behind. **Always pair Platform Event publishing with a persistent `Agent_Activity_Log__c` row** -- the platform event is the streaming projection, the record is the source of truth.
 
@@ -583,7 +583,7 @@ Implement with a weekly scheduled batch that deletes by `Status__c` + `CreatedDa
 | 8 | Not truncating long messages | abbreviate to 5000 chars for `Error__c` and 32000 for `Agent_Comments__c` -- `AppLogger` does this for you; do it yourself if calling other inserts |
 | 9 | Logging inside a per-record loop | log a summary after the loop; per-record logging blows governor limits and dashboard counts |
 | 10 | Missing component name in the log | always pass `Class.method` form as `context` -- `(no-context)` rows are unactionable |
-| 11 | Referencing `AppLogger` when it is not deployed in the target org | `AppLogger` is a project standard pattern but is not a managed package or native Salesforce class. If it does not exist as a deployed Apex class in the org, every class that references it will fail to compile. Before using `AppLogger` in any service class, verify it exists in the org. If it does not, fall back to `System.debug(LoggingLevel.ERROR, context + message)` and add a TODO comment to migrate once `AppLogger` is deployed. Never assume `AppLogger` is present just because the guidelines recommend it. |
+| 11 | Referencing `AppLogger` when it is not deployed in the target environment | `AppLogger` is a project standard pattern but is not a managed package or native Salesforce class. If it does not exist as a deployed Apex class in the target environment, every class that references it will fail to compile. Before using `AppLogger` in any service class, verify it exists in the target environment. If it does not, fall back to `System.debug(LoggingLevel.ERROR, context + message)` and add a TODO comment to migrate once `AppLogger` is deployed. Never assume `AppLogger` is present just because the guidelines recommend it. |
 | 12 | Calling imaginary `AppLogger` overloads (`AppLogger.info(...)`, `AppLogger.error(component, cid, op, Exception)`, `AppLogger.generateCorrelationId()`) | the deployed shim has exactly one method: `log(String, Severity, String, Id)`. Compose richer behavior inline or extend `AppLogger.cls` and update this doc |
 | 13 | Passing a non-Case Id as `recordId` and expecting `Case__c` to populate | `AppLogger` only stamps `Case__c` when `recordId.getSobjectType() == Case.SObjectType`. Other record types are ignored on the Case lookup |
 | 14 | Logging a `FATAL` severity literal in the message and expecting alerting | `Severity.FATAL` does not exist on the deployed enum. Use ERROR; if you need fatal semantics, extend the enum and add a `Severity` field to the object |
@@ -594,14 +594,14 @@ Implement with a weekly scheduled batch that deletes by `Status__c` + `CreatedDa
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|
-| 1 | 2026-05-16 | Earlier drafts of this guideline assumed an `AppLog__c` custom object with `Level__c`, `Component__c`, `CorrelationId__c`, etc. | The deployed `AppLogger` in PlusGradeFullSB writes to the pre-existing `Agent_Activity_Log__c` object using fixed picklist values (`Action_Name__c='Agent_Invocation'`, `AI_Tool_Name__c='Agent Chat'`, `Source__c='UI_Chat'`). Component + message + severity are concatenated into `Agent_Comments__c`. No `AppLog__c` exists. | Verified by reading `force-app/main/default/classes/AppLogger.cls` and the `Agent_Activity_Log__c` field directory on 2026-05-16. Future migrations to a dedicated `AppLog__c` need a deliberate refactor. |
+| 1 | 2026-05-16 | Earlier drafts of this guideline assumed an `AppLog__c` custom object with `Level__c`, `Component__c`, `CorrelationId__c`, etc. | The deployed `AppLogger` in <target-env-alias> writes to the pre-existing `Agent_Activity_Log__c` object using fixed picklist values (`Action_Name__c='Agent_Invocation'`, `AI_Tool_Name__c='Agent Chat'`, `Source__c='UI_Chat'`). Component + message + severity are concatenated into `Agent_Comments__c`. No `AppLog__c` exists. | Verified by reading `force-app/main/default/classes/AppLogger.cls` and the `Agent_Activity_Log__c` field directory on 2026-05-16. Future migrations to a dedicated `AppLog__c` need a deliberate refactor. |
 | 2 | 2026-05-16 | `AppLogger.error(component, correlationId, operation, Exception e)` and similar typed overloads were prescribed by earlier drafts | The deployed shim has ONE public method: `log(String context, Severity sevLevel, String message, Id recordId)`. Exception details must be flattened into the `message` argument by the caller: `e.getMessage() + ' | ' + e.getStackTraceString()`. | Confirmed in `AppLogger.cls` and exercised by `AppLoggerTest.cls` test methods. |
 | 3 | 2026-05-16 | `developer.salesforce.com` and `help.salesforce.com` doc pages as authoritative references for runtime details (System.Logger, RTEM, debug log levels) | WebFetch returns the page header only -- JS-rendered body is unavailable. The `forcedotcom/sf-skills` and project-internal Apex code are the ground truth used here. | Same root cause as `../salesforce-agentforce-script/SKILL.md` empirical finding #5. Cite official URLs as canonical pointers but verify against project code. |
 | 4 | 2026-05-16 | A dedicated `Correlation_Id__c` column on the log object for first-class correlation queries | `Agent_Activity_Log__c` has no correlation-id field. Embed `cid=<token>` inside the message; query with `Agent_Comments__c LIKE '%cid=<token>%'`. Slower than an indexed lookup but works without schema changes. | Pragmatic shim until a real `AppLog__c` (or a new field on `Agent_Activity_Log__c`) is introduced. |
 
 ---
 
-*Observability & Logging Guidelines | Plusgrade PlusGradeFullSB | Last verified 2026-05-16*
+*Observability & Logging Guidelines | Reusable Salesforce Agent Guidelines | Last verified 2026-05-16*
 
 ## Official References
 

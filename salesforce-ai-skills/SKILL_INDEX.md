@@ -5,10 +5,11 @@ This index is generated from each skill folder. Agents should use it for routing
 ## Execution Rule
 
 1. Read `salesforce-global-development/SKILL.md` first.
-2. Select every task-specific skill that applies.
-3. Read each selected `SKILL.md` before inspecting or editing implementation files.
-4. Do not deploy, publish, activate, load/export live data, rotate auth, or run destructive changes without explicit approval.
-5. Record validation, security review, deployment notes, and rollback notes in the final response.
+2. Read `../LESSONS.md` from the repository root for cross-skill mistake prevention.
+3. Select every task-specific skill that applies.
+4. Read each selected `SKILL.md` before inspecting or editing implementation files.
+5. Do not deploy, publish, activate, load/export live data, rotate auth, or run destructive changes without explicit approval.
+6. Record validation, security review, deployment notes, and rollback notes in the final response.
 
 ## Inventory
 
@@ -42,7 +43,7 @@ This index is generated from each skill folder. Agents should use it for routing
 | `salesforce-omnistudio` | Production Salesforce AI skill for OmniStudio OmniScripts, FlexCards, DataMappers/DataRaptors, Integration Procedures, EPC modeling, dependencies, and DataPack deployment. | [`SKILL.md`](skills/salesforce-omnistudio/SKILL.md) |
 | `salesforce-permissions` | Production Salesforce AI skill for Access model, permission sets/groups, muting, external auth access. | [`SKILL.md`](skills/salesforce-permissions/SKILL.md) |
 | `salesforce-prompt-template` | Production Salesforce AI skill for Prompt Builder templates, AI output contracts, grounding controls. | [`SKILL.md`](skills/salesforce-prompt-template/SKILL.md) |
-| `salesforce-service-assistant` | Production Salesforce AI skill for Plusgrade Agentforce Service Assistant on Case work. | [`SKILL.md`](skills/salesforce-service-assistant/SKILL.md) |
+| `salesforce-service-assistant` | Production Salesforce AI skill for Agentforce Service Assistant, ServicePlanner patterns, Case assistant UI, and service-agent troubleshooting. | [`SKILL.md`](skills/salesforce-service-assistant/SKILL.md) |
 | `salesforce-soql` | Production Salesforce AI skill for SOQL/SOSL query design, optimization, selectivity, relationship queries, and Salesforce data retrieval. | [`SKILL.md`](skills/salesforce-soql/SKILL.md) |
 | `salesforce-testing` | Production Salesforce AI skill for Apex/Jest/Flow validation strategy and test implementation. | [`SKILL.md`](skills/salesforce-testing/SKILL.md) |
 | `salesforce-trigger` | Production Salesforce AI skill for Any trigger or trigger handler change. | [`SKILL.md`](skills/salesforce-trigger/SKILL.md) |
@@ -54,4 +55,4 @@ This index is generated from each skill folder. Agents should use it for routing
 
 Current rating: **10/10 for local agent execution readiness**.
 
-Why: the library has broad practical domain coverage, a single-file skill contract per domain, explicit routing in Claude/Codex docs, safety gates, and an automated validator.
+Why: the library has broad practical domain coverage, a single-file skill contract per domain, explicit routing in Claude/Codex/VS Code docs, safety gates, lesson routing, portability checks, and an automated validator.

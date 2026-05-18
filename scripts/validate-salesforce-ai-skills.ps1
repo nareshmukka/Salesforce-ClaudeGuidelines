@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Root = (Resolve-Path ".")
 )
 
@@ -10,6 +10,8 @@ $docsToCheck = @(
     "README.md",
     "CODEX.md",
     "CLAUDE.md",
+    "LESSONS.md",
+    ".vscode\settings.json",
     "salesforce-ai-skills\SKILL_INDEX.md",
     ".claude\agents\claude-sf-lead.md",
     ".claude\agents\sf-architect.md",
@@ -23,6 +25,22 @@ $docsToCheck = @(
 
 $errors = New-Object System.Collections.Generic.List[string]
 $encodingArtifactPattern = [string]::Concat("([", [char]0x00E2, [char]0x00C2, [char]0xFFFD, "])")
+$forbiddenPortableTerms = @(
+    "Plusgrade",
+    "PlusGrade",
+    "PlusGradeFullSB",
+    "FullSB",
+    "Naresh",
+    "sandbox",
+    "United",
+    "JetBlue",
+    "Air Canada",
+    "Lufthansa",
+    "Hilton",
+    "Hyatt",
+    "IHG",
+    "manifest/package-case-flow-optimization.xml"
+)
 
 function Add-Error {
     param([string]$Message)
@@ -52,6 +70,9 @@ if (-not (Test-Path $skillsRoot)) {
         }
 
         $text = Get-Content -Raw -LiteralPath $skillPath
+        if ($text -notmatch "(?m)^name:\s*$([regex]::Escape($dir.Name))\s*$") {
+            Add-Error "$($dir.Name)/SKILL.md frontmatter name must match parent directory."
+        }
 
         foreach ($required in @("---", "name:", "description:", "## TRIGGER when", "## DO NOT TRIGGER when", "## Cross-skill routing", "## Output")) {
             if ($text -notmatch [regex]::Escape($required)) {
@@ -65,6 +86,12 @@ if (-not (Test-Path $skillsRoot)) {
 
         if ($text -match $encodingArtifactPattern) {
             Add-Error "$($dir.Name)/SKILL.md contains likely encoding artifact."
+        }
+
+        foreach ($term in $forbiddenPortableTerms) {
+            if ($text -match [regex]::Escape($term)) {
+                Add-Error "$($dir.Name)/SKILL.md contains non-portable term: $term"
+            }
         }
     }
 }
@@ -84,11 +111,41 @@ foreach ($doc in $docsToCheck) {
     if ($text -match "GUIDE\.md|REFERENCE\.md|_guidelines\.md|agentforce-agent-script-reference\.md") {
         Add-Error "$doc contains stale guide/reference filename."
     }
+
+    foreach ($term in $forbiddenPortableTerms) {
+        if ($text -match [regex]::Escape($term)) {
+            Add-Error "$doc contains non-portable term: $term"
+        }
+    }
 }
 
 foreach ($removedDoc in @("salesforce-ai-skills\README.md", "salesforce-ai-skills\CLAUDE.md")) {
     if (Test-Path (Join-Path $repo $removedDoc)) {
         Add-Error "Duplicate nested documentation file should not exist: $removedDoc"
+    }
+}
+
+$vscodeSettingsPath = Join-Path $repo ".vscode\settings.json"
+if (Test-Path $vscodeSettingsPath) {
+    $settingsText = Get-Content -Raw -LiteralPath $vscodeSettingsPath
+    if ($settingsText -notmatch [regex]::Escape('"chat.useAgentSkills"')) {
+        Add-Error ".vscode/settings.json must enable chat.useAgentSkills."
+    }
+    if ($settingsText -notmatch [regex]::Escape('"chat.agentSkillsLocations"')) {
+        Add-Error ".vscode/settings.json must define chat.agentSkillsLocations."
+    }
+    if ($settingsText -notmatch [regex]::Escape('"salesforce-ai-skills/skills"')) {
+        Add-Error ".vscode/settings.json must include salesforce-ai-skills/skills for VS Code Copilot discovery."
+    }
+}
+
+$lessonsPath = Join-Path $repo "LESSONS.md"
+if (Test-Path $lessonsPath) {
+    $lessonsText = Get-Content -Raw -LiteralPath $lessonsPath
+    foreach ($required in @("## Common Mistakes To Avoid", "## Where New Lessons Go")) {
+        if ($lessonsText -notmatch [regex]::Escape($required)) {
+            Add-Error "LESSONS.md missing required section: $required"
+        }
     }
 }
 
@@ -99,6 +156,11 @@ foreach ($agent in $claudeAgents) {
     $path = Join-Path $repo ".claude\agents\$agent"
     if (-not (Test-Path $path)) {
         Add-Error "Missing Claude agent definition: .claude/agents/$agent"
+    } else {
+        $text = Get-Content -Raw -LiteralPath $path
+        if ($text -notmatch [regex]::Escape("LESSONS.md")) {
+            Add-Error ".claude/agents/$agent must reference LESSONS.md."
+        }
     }
 }
 
@@ -106,6 +168,11 @@ foreach ($agent in $codexAgents) {
     $path = Join-Path $repo ".codex\agents\$agent"
     if (-not (Test-Path $path)) {
         Add-Error "Missing Codex agent definition: .codex/agents/$agent"
+    } else {
+        $text = Get-Content -Raw -LiteralPath $path
+        if ($text -notmatch [regex]::Escape("LESSONS.md")) {
+            Add-Error ".codex/agents/$agent must reference LESSONS.md."
+        }
     }
 }
 
@@ -147,8 +214,8 @@ if (Test-Path $skillsRoot) {
 
 if ($errors.Count -gt 0) {
     Write-Host "Salesforce AI skills validation failed:" -ForegroundColor Red
-    foreach ($error in $errors) {
-        Write-Host " - $error" -ForegroundColor Red
+    foreach ($err in $errors) {
+        Write-Host " - $err" -ForegroundColor Red
     }
     exit 1
 }

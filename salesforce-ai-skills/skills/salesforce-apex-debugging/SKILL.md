@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-18
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -24,7 +24,7 @@ metadata:
 - Also read: Apex + Observability + Testing.
 
 ## Workflow
-1. Capture exact symptom, user/context, timestamp, org alias, and transaction entry point.
+1. Capture exact symptom, user/context, timestamp, target environment alias, and transaction entry point.
 2. Gather logs or reproduce with the smallest safe input.
 3. Classify failure: permissions, null/data shape, validation rule, automation side effect, governor limit, callout, async, or platform issue.
 4. Trace from entry point through service/selector/domain/integration layers.

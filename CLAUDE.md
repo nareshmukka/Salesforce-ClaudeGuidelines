@@ -1,6 +1,6 @@
 ﻿# CLAUDE.md -- Behavioral Contract for Claude Code and Claude Agents
 
-**Project:** Plusgrade PlusGradeFullSB | **Maintained by:** Naresh | Senior Salesforce Developer
+**Project:** Reusable Salesforce Agent Guidelines | **Maintained by:** Repository maintainers
 
 This file is read automatically by **Claude Code** at session start and must be included in the system prompt for any **Claude Agent** (spawned subagent) working in this repo. It defines what to read, what to do, and how to record lessons. For the full guideline library index and cross-agent usage instructions, see [README.md](README.md).
 
@@ -27,6 +27,7 @@ scripts/                   <- Utility scripts
 **Always read first:**
 1. `salesforce-ai-skills/SKILL_INDEX.md` -- complete routing index.
 2. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md` -- master contract, architecture, security, anti-patterns, DoD.
+3. `LESSONS.md` -- cross-skill mistake ledger and reusable prevention rules.
 
 **Then read the file matching your task:**
 
@@ -63,7 +64,7 @@ scripts/                   <- Utility scripts
 | Prompt Builder template | `salesforce-ai-skills/skills/salesforce-prompt-template/SKILL.md` |
 | Lightning App Builder page | `salesforce-ai-skills/skills/salesforce-flexipage/SKILL.md` |
 | Visualforce page or controller | `salesforce-ai-skills/skills/salesforce-visualforce/SKILL.md` |
-| Agentforce Service Assistant on Case (this org-specific implementation) | `salesforce-ai-skills/skills/salesforce-service-assistant/SKILL.md` |
+| Agentforce Service Assistant / ServicePlanner patterns | `salesforce-ai-skills/skills/salesforce-service-assistant/SKILL.md` |
 | Media/image search for Salesforce docs, demos, enablement | `salesforce-ai-skills/skills/salesforce-media-search/SKILL.md` |
 
 All paths are relative to the repository root. For multi-component tasks, read all relevant files.
@@ -79,45 +80,30 @@ Both repos can be cloned locally and read directly for ground truth.
 
 ---
 
-## 3. Project Context -- Case Flow Migration
+## 3. Portable Project Contract
 
-- **Do NOT deactivate or delete old flows.** Naresh does that manually after sandbox validation.
-- **Do NOT activate new flows.** Deploy as `status = Draft`. Naresh activates manually.
-- **Org alias:** `PlusGradeFullSB` | **Manifest:** `manifest/package-case-flow-optimization.xml` (or a dedicated per-delivery manifest when scoped tighter)
-- **Test classes:** Deferred until after sandbox functional testing.
-- **PII-handling Agentforce agents:** `<logPrivateConversationData>false</logPrivateConversationData>` MUST be re-asserted via a Bot-only override manifest after every `sf agent publish authoring-bundle` (the publish step auto-resets it to `true`). See `salesforce-ai-skills/skills/salesforce-agentforce-authoring-bundle/SKILL.md` Section 8 for the override pattern.
+This repository is reusable across Salesforce projects. Do not hardcode company names, person names, target environment aliases, instance URLs, record IDs, secrets, or customer-specific process names in shared skills or agent definitions.
 
-| Flow | triggerOrder | Purpose |
-|---|---|---|
-| `Case_BS_Normalize_Case` | 10 (before-save) | Field normalization |
-| `Case_AS_Status_SLA` | 10 | Status log, SLA timestamps, RH SLA calcs |
-| `Case_AS_Escalation` | 20 | Child case creation on escalation |
-| `Case_AS_Linked_Case` | 30 | Linked_Case__c for duplicate/merge/split |
-| `Case_AS_Routing` | 40 | Owner follower, product lookup, PBU |
-| `Case_AS_Notifications` | 50 | Nexus email alerts (blocked on OV-14) |
+Project-specific facts belong in local, unshared working notes or implementation files, not in the reusable skill library. If a task depends on project facts, state them as assumptions or ask the user to provide the relevant file.
 
-| Apex Class | Role |
-|---|---|
-| `CaseTrigger` / `CaseTriggerHandler` | Single trigger -> handler dispatch |
-| `CaseEscalationService` | `@InvocableMethod` -- escalation paths |
-| `CaseLinkedCaseService` | `@InvocableMethod` -- duplicate/merge/split |
-| `CaseListViewService` | Platform event publisher |
-| `CaseAcknowledgementService` | Auto-acknowledge on Resolved |
+Universal gates:
+- Do not deploy, publish, activate, deactivate, delete, or run destructive changes without explicit approval.
+- Do not run live data load/export/update/delete without explicit approval.
+- Treat Flow activation, Agentforce publish/activation, connector activation, credential rotation, and customer-facing send/write actions as human-gated.
+- Use placeholders such as `<target-env-alias>`, `<manifest-path>`, `<agent-api-name>`, and `<object-api-name>` in reusable examples.
 
 ---
 
 ## 4. Validation Command
 
-Run after every significant change. Zero component errors required.
+Run after every significant change. Use the target environment and manifest supplied by the current project.
 
 ```bash
 sf project deploy start \
-  --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB \
+  --manifest <manifest-path> \
+  --target-org <target-env-alias> \
   --dry-run --test-level RunLocalTests --wait 60
 ```
-
-13 pre-existing Opportunity test failures are expected and do not block Case deployment.
 
 ---
 
@@ -142,9 +128,9 @@ Every skill file carries two complementary lesson ledgers -- together they form 
 | Type | Captures | Format | When to use |
 |---|---|---|---|
 | **Common AI Mistakes to Avoid** | Reactive -- AI/developer errors that should not repeat | `\| # \| Mistake (brief) \| Correct approach \|` | When a code review or production incident reveals that an AI agent or developer produced something wrong against the existing rules |
-| **Empirical Findings & Implementation Notes** | Proactive -- gaps where Salesforce's documented approach doesn't work in this org/version/feature combination; the working alternative | `\| # \| Date \| Documented approach \| What actually works \| Why / Context \|` | When implementation reveals that the official docs are incomplete, wrong for our context, or that a working alternative exists. The date column matters -- Salesforce evolves; tag every finding |
+| **Empirical Findings & Implementation Notes** | Proactive -- gaps where Salesforce's documented approach doesn't work in the target environment/version/feature combination; the working alternative | `\| # \| Date \| Documented approach \| What actually works \| Why / Context \|` | When implementation reveals that the official docs are incomplete, wrong for our context, or that a working alternative exists. The date column matters -- Salesforce evolves; tag every finding |
 
-Both tables live in the same skill file. The Common AI Mistakes table is reactive prevention; the Empirical Findings table is proactive knowledge augmentation. Over many projects this dual-layer builds a Plusgrade-specific knowledge graph that goes beyond what any single Salesforce doc page can offer.
+Both tables live in the same skill file. The Common AI Mistakes table is reactive prevention; the Empirical Findings table is proactive knowledge augmentation. Over many projects this dual-layer builds a project-specific knowledge graph that goes beyond what any single Salesforce doc page can offer.
 
 ### Routing -- which skill file does the lesson go to?
 
@@ -183,7 +169,7 @@ When a mistake is discovered or a new constraint confirmed, add it to the **corr
 | Prompt Builder templates, grounding, merge fields | `salesforce-ai-skills/skills/salesforce-prompt-template/SKILL.md` |
 | Lightning App Builder pages, Dynamic Forms, visibility rules | `salesforce-ai-skills/skills/salesforce-flexipage/SKILL.md` |
 | Visualforce pages, controllers, view state | `salesforce-ai-skills/skills/salesforce-visualforce/SKILL.md` |
-| Agentforce Service Assistant on Case -- Plusgrade implementation specifics | `salesforce-ai-skills/skills/salesforce-service-assistant/SKILL.md` |
+| Agentforce Service Assistant on Case -- project implementation specifics | `salesforce-ai-skills/skills/salesforce-service-assistant/SKILL.md` |
 | Ready-to-use Agentforce authoring + Apex caller + LWC integration templates | `salesforce-ai-skills/skills/salesforce-ai-prompt-templates/SKILL.md` |
 | Media/image search and attribution lessons | `salesforce-ai-skills/skills/salesforce-media-search/SKILL.md` |
 | Process: reading source before writing, validate frequently, scope discipline | `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md` |
@@ -221,4 +207,4 @@ For ad-hoc one-shot work without the pipeline, follow Sections 2-6 above and use
 
 ---
 
-*CLAUDE.md | Plusgrade PlusGradeFullSB | Naresh | Senior Salesforce Developer*
+*CLAUDE.md | Reusable Salesforce Agent Guidelines | the release owner | Salesforce Developer*

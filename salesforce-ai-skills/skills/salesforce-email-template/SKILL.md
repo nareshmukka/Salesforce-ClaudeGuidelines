@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -112,7 +112,7 @@ force-app/main/default/email/
       <TemplateDevName>.email-meta.xml            # EmailTemplate metadata wrapper
 ```
 
-**Critical:** the folder must exist in the org before the template can deploy into it. The `.email` filename, `name` attribute in the meta XML, and the `members` entry in `package.xml` (`<FolderDevName>/<TemplateDevName>`) must all align -- case-sensitive.
+**Critical:** the folder must exist in the target environment before the template can deploy into it. The `.email` filename, `name` attribute in the meta XML, and the `members` entry in `package.xml` (`<FolderDevName>/<TemplateDevName>`) must all align -- case-sensitive.
 
 Visualforce email templates additionally need the linked controller class deployed; Lightning templates store their body in `EmailTemplate.HtmlValue` and don't require a `.email` companion file -- they ship as a `LightningEmailTemplate` (Content Builder) record retrieved as part of `EmailTemplate`.
 
@@ -426,7 +426,7 @@ actions:
       target: "apex://GetEmailTemplateAction"
 ```
 
-### Error patterns observed in this org
+### Error patterns observed in the target environment
 
 - **Template-not-found:** the LLM asks for a friendly name; the action queries `DeveloperName` not `Name`. Always pass the API name. If the user gave a label, resolve label -> DeveloperName before invoking.
 - **Recipient-without-Contact:** `Messaging.renderStoredEmailTemplate(templateId, null, caseId)` returns merge fields like `{!Contact.FirstName}` literally because the Who context is missing. Always check `Case.ContactId` first and short-circuit with a clear error to the agent (then `filter_from_agent: True` so the LLM doesn't echo it verbatim).
@@ -440,26 +440,26 @@ actions:
 # Retrieve a template by folder/name
 sf project retrieve start \
   --metadata "EmailTemplate:Support_Team_Templates/Case_Support_Acknowledgement" \
-  --target-org PlusGradeFullSB
+  --target-org <target-env-alias>
 
 # Deploy folder first, then the template
 sf project deploy start \
   --metadata "EmailFolder:Support_Team_Templates" \
-  --target-org PlusGradeFullSB
+  --target-org <target-env-alias>
 
 sf project deploy start \
   --metadata "EmailTemplate:Support_Team_Templates/Case_Support_Acknowledgement" \
-  --target-org PlusGradeFullSB
+  --target-org <target-env-alias>
 
 # Inspect templates via SOQL
 sf data query \
   --query "SELECT Id, Name, DeveloperName, FolderName, TemplateType, IsActive, UiType FROM EmailTemplate WHERE TemplateType IN ('lightning','html','custom','visualforce','text') ORDER BY FolderName, Name" \
-  --target-org PlusGradeFullSB
+  --target-org <target-env-alias>
 
 # Confirm a folder exists
 sf data query \
   --query "SELECT Id, Name, DeveloperName, Type FROM Folder WHERE Type = 'Email' ORDER BY Name" \
-  --target-org PlusGradeFullSB
+  --target-org <target-env-alias>
 ```
 
 ---
@@ -498,7 +498,7 @@ sf data query \
 
 ## 12. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|

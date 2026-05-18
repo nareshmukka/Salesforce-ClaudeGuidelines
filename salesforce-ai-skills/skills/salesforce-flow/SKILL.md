@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -109,11 +109,11 @@ Before-save for same-record field updates; after-save for related records/action
 
 # Flow Guidelines -- Salesforce Flow Authoring Reference
 
-Authoritative reference for record-triggered, autolaunched, screen, scheduled, and platform-event flows in this project. Single source of truth for flow XML structure, ordering rules, and Plusgrade-specific conventions.
+Authoritative reference for record-triggered, autolaunched, screen, scheduled, and platform-event flows in this project. Single source of truth for flow XML structure, ordering rules, and project-specific conventions.
 
-**Verified against:** [Flow Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_visual_workflow.htm) - [Flow Order of Execution](https://help.salesforce.com/s/articleView?id=sf.flow_concepts_trigger_order_of_execution.htm) - [Record-Triggered Flow Best Practices](https://help.salesforce.com/s/articleView?id=sf.flow_concepts_rt_bestpractices.htm) - [Fault Paths](https://help.salesforce.com/s/articleView?id=sf.flow_build_fault_paths.htm) - `forcedotcom/sf-skills/skills/generating-flow/SKILL.md` - CLAUDE.md (Plusgrade PlusGradeFullSB). Last verified 2026-05-16.
+**Verified against:** [Flow Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_visual_workflow.htm) - [Flow Order of Execution](https://help.salesforce.com/s/articleView?id=sf.flow_concepts_trigger_order_of_execution.htm) - [Record-Triggered Flow Best Practices](https://help.salesforce.com/s/articleView?id=sf.flow_concepts_rt_bestpractices.htm) - [Fault Paths](https://help.salesforce.com/s/articleView?id=sf.flow_build_fault_paths.htm) - `forcedotcom/sf-skills/skills/generating-flow/SKILL.md` - CLAUDE.md (Reusable Salesforce Agent Guidelines). Last verified 2026-05-16.
 
-> **Project policy (CLAUDE.md):** Deploy every flow as `status: Draft`. Naresh activates manually after sandbox validation. **Do NOT deactivate or delete old flows** -- Naresh handles cutover. Per-object trigger ordering uses the 10/20/30/40/50 convention (see Section 3 1. Flow Types -- Decision Matrix
+> **Project policy (CLAUDE.md):** Deploy every flow as `status: Draft`. the release owner activates manually after test-environment validation. **Do NOT deactivate or delete old flows** -- the release owner handles cutover. Per-object trigger ordering uses the 10/20/30/40/50 convention (see Section 3 1. Flow Types -- Decision Matrix
 
 | Type | When | DML allowed | Callouts | XML `start.triggerType` |
 |---|---|---|---|---|
@@ -655,25 +655,25 @@ Flow XML: `<actionCalls><actionType>apex</actionType><actionName>CaseEscalationS
 
 ## 13. Status & Versioning
 
-Project rule (CLAUDE.md): **deploy as `<status>Draft</status>`**. Naresh activates manually after sandbox validation.
+Project rule (CLAUDE.md): **deploy as `<status>Draft</status>`**. the release owner activates manually after test-environment validation.
 
 ```xml
 <status>Draft</status>     <!-- this project -- required -->
-<status>Active</status>    <!-- ONLY when Naresh activates in UI / org metadata -->
+<status>Active</status>    <!-- ONLY when the release owner activates in UI / org metadata -->
 <status>Obsolete</status>  <!-- auto-set by Salesforce when superseded -->
 ```
 
 Activation rules:
 - Exactly one version of a flow is Active at a time. Activating version N auto-deactivates N-1.
-- Keep N-1 in the org for one release cycle as rollback insurance.
-- **Do NOT deactivate old flows** in this project -- Naresh handles cutover after sandbox validation (CLAUDE.md Section 3 14. Validation Command (project)
+- Keep N-1 in the target environment for one release cycle as rollback insurance.
+- **Do NOT deactivate old flows** in this project -- the release owner handles cutover after test-environment validation (CLAUDE.md Section 3 14. Validation Command (project)
 
 Run after every significant change. Zero component errors required.
 
 ```bash
 sf project deploy start \
-   --manifest manifest/package-case-flow-optimization.xml \
-   --target-org PlusGradeFullSB \
+   --manifest manifest/package.xml \
+   --target-org <target-env-alias> \
    --dry-run --test-level RunLocalTests --wait 60
 ```
 
@@ -704,7 +704,7 @@ sf project deploy start \
 ### Project
 - [ ] `<status>Draft</status>` -- never `Active`
 - [ ] Old flow NOT deactivated
-- [ ] Dry-run deploy passes with zero component errors against `manifest/package-case-flow-optimization.xml`
+- [ ] Dry-run deploy passes with zero component errors against `manifest/package.xml`
 
 ---
 
@@ -724,7 +724,7 @@ sf project deploy start \
 | 10 | Fault path loops back to earlier element | Fault path must route to End or error screen |
 | 11 | Not capturing {!$Flow.FaultMessage} | Capture FaultMessage immediately in fault path |
 | 12 | Sensitive data stored in flow variables | Avoid storing tokens, passwords in flow variables |
-| 13 | Activating without testing in sandbox | Always test in sandbox with representative data |
+| 13 | Activating without testing in test environment | Always test in test environment with representative data |
 | 14 | Not keeping prior version | Keep N-1 version for at least one release cycle |
 | 15 | No changed-field detection on update trigger | Use $Record__Prior in entry conditions |
 | 16 | Deeply nested decisions without formulas | Extract complex conditions to Formula resources |
@@ -770,13 +770,13 @@ sf project deploy start \
 
 ## 17. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|
-| 1 | 2026-05-16 | `help.salesforce.com` Flow doc pages are the canonical authority for design best practices, order of execution, and metadata XML structure | The live Help pages are JS-rendered and return CSS-error stubs to non-browser fetchers. Ground flow authoring against `developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_visual_workflow.htm` (Metadata API), `forcedotcom/sf-skills/skills/generating-flow/SKILL.md`, and retrieved flow XML from prior versions in this org | Confirmed 2026-05-16 across `flow_concepts_design_best_practices.htm`, `flow_concepts_trigger_order_of_execution.htm`, and `flow_concepts_rt_bestpractices.htm` -- all returned CSS-loading shells via WebFetch |
+| 1 | 2026-05-16 | `help.salesforce.com` Flow doc pages are the canonical authority for design best practices, order of execution, and metadata XML structure | The live Help pages are JS-rendered and return CSS-error stubs to non-browser fetchers. Ground flow authoring against `developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_visual_workflow.htm` (Metadata API), `forcedotcom/sf-skills/skills/generating-flow/SKILL.md`, and retrieved flow XML from prior versions in the target environment | Confirmed 2026-05-16 across `flow_concepts_design_best_practices.htm`, `flow_concepts_trigger_order_of_execution.htm`, and `flow_concepts_rt_bestpractices.htm` -- all returned CSS-loading shells via WebFetch |
 | 2 | 2026-05-16 | Salesforce docs suggest using the block-form `<filters>` element for entry conditions on record-triggered flows | This project standardizes on `<filterFormula>` -- single expression supports OR/mixed boolean logic, RecordType gating, and `ISCHANGED()`/`PRIORVALUE()` calls in one place. Block-form `<filters>` is AND-only and forces decisions into the body of the flow for any OR logic | `<filterFormula>` consolidates entry logic, keeps it visible at the top of the flow, and matches the pattern used by `Case_AS_Status_SLA`, `Case_AS_Escalation`, and `Case_AS_Linked_Case` |
-| 3 | 2026-05-16 | Many examples show `<status>Active</status>` for deployable flow XML | This project deploys every flow as `<status>Draft</status>` -- Naresh activates manually after sandbox validation. Cutover is human-gated; old flows are never deactivated by automation either | CLAUDE.md Section 3 project policy. Auto-activation has caused production incidents in prior migrations |
+| 3 | 2026-05-16 | Many examples show `<status>Active</status>` for deployable flow XML | This project deploys every flow as `<status>Draft</status>` -- the release owner activates manually after test-environment validation. Cutover is human-gated; old flows are never deactivated by automation either | CLAUDE.md Section 3 project policy. Auto-activation has caused production incidents in prior migrations |
 
 ---
 
@@ -791,9 +791,9 @@ When Salesforce's documented approach doesn't work in this org, the workaround g
 - [`@InvocableVariable`](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_annotation_InvocableVariable.htm)
 - [Flow Limits and Considerations](https://help.salesforce.com/s/articleView?id=sf.flow_considerations.htm)
 - [forcedotcom/sf-skills -- generating-flow SKILL.md](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-flow)
-- CLAUDE.md (Plusgrade PlusGradeFullSB project contract)
+- CLAUDE.md (Reusable Salesforce Agent Guidelines project contract)
 
 ---
 
-*Flow Guidelines | Plusgrade PlusGradeFullSB | Naresh | Last verified 2026-05-16*
+*Flow Guidelines | Reusable Salesforce Agent Guidelines | the release owner | Last verified 2026-05-16*
 

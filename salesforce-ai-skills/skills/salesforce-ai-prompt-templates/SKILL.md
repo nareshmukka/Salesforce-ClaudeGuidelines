@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -99,7 +99,7 @@ Prompt templates must require file inspection, no deploy by default, and explici
 
 ## Full Guidance
 
-# AI Agent Prompt Templates -- Plusgrade Agentforce
+# AI Agent Prompt Templates -- project Agentforce
 
 Copy-paste prompt scaffolds and code templates for the AI-agent tasks this project ships most often. The DSL grammar, lifecycle commands, and authoring conventions are owned elsewhere -- this file is the **template-helper layer**.
 
@@ -139,7 +139,7 @@ A complete, valid `.agent` file with every required block. Drop into `force-app/
 system:
    instructions: |
       ROLE
-      You are a <ROLE -- e.g. server-invoked email-analysis specialist> for Plusgrade.
+      You are a <ROLE -- e.g. server-invoked email-analysis specialist> for project.
 
       GROUNDING
       Ground every output in action outputs. Never invent <DOMAIN_NOUNS -- e.g.
@@ -171,9 +171,9 @@ config:
    agent_label: "<Display Label>"
    description: "<one-paragraph what-and-why>"
    role: "<focused operator persona>"
-   company: "Plusgrade -- global airline/hotel loyalty programs operating across 30+ markets, partnering with major carriers and hotel groups."
+   company: "<company/domain context relevant to the assistant>"
    agent_type: "AgentforceEmployeeAgent"              # or AgentforceServiceAgent
-   # default_agent_user: "<svc.user@plusgrade.com>"   # SERVICE AGENTS ONLY -- delete this line for Employee
+   # default_agent_user: "<service-user@example.com>"   # SERVICE AGENTS ONLY -- delete this line for Employee
    enable_enhanced_event_logs: True
    user_locale: "en_US"
 
@@ -389,8 +389,8 @@ Standard backing class for an `apex://` target. Try/catch wraps every call; `err
 
 ```apex
 /**
- *  Developer: Naresh
- *  Title:     Senior Salesforce Developer
+ *  Developer: the release owner
+ *  Title:     Salesforce Developer
  *  Purpose:   Backing logic for Agentforce action <action_name>.
  *             Wired to subagent action with target "apex://<ClassName>".
  */
@@ -707,7 +707,7 @@ Post-publish sequence:
 sf agent publish authoring-bundle --json --api-name <Dev_Name>
 
 # 2. Immediately re-deploy the override
-sf project deploy start --json --manifest manifest/package-<agent-slug>-bot-override.xml --target-org <ORG_ALIAS>
+sf project deploy start --json --manifest manifest/package-<agent-slug>-bot-override.xml --target-org <target-env-alias>
 
 # 3. Verify
 sf project retrieve start --json --metadata Bot:<Dev_Name>
@@ -723,8 +723,8 @@ grep logPrivateConversationData force-app/main/default/bots/<Dev_Name>/<Dev_Name
 
 ```apex
 /**
- *  Developer: Naresh
- *  Title:     Senior Salesforce Developer
+ *  Developer: the release owner
+ *  Title:     Salesforce Developer
  *  Purpose:   Smoke-test harness for <AgentName>.  Runs from anonymous Apex.
  *             Logs every request + response to AppLog__c with correlationId
  *             for trace-side join.
@@ -789,13 +789,13 @@ public with sharing class <AgentName>TestInvoker {
 
 ```bash
 # Anonymous Apex execution
-sf apex run --target-org <ORG_ALIAS> --file scripts/apex/run-<agent>-tests.apex
+sf apex run --target-org <target-env-alias> --file scripts/apex/run-<agent>-tests.apex
 
 # scripts/apex/run-<agent>-tests.apex contains one line:
 #    <AgentName>TestInvoker.runAll();
 
 # Read results
-sf data query --target-org <ORG_ALIAS> --json \
+sf data query --target-org <target-env-alias> --json \
   -q "SELECT Method__c, Result__c, CorrelationId__c, Details__c FROM AppLog__c WHERE Method__c LIKE '<AgentName>TestInvoker%' ORDER BY CreatedDate DESC LIMIT 50"
 ```
 

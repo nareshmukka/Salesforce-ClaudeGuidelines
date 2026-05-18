@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-18
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -37,7 +37,7 @@ Provide safe guidance for Connected App configuration and review.
 ## Best Practices
 - Use the narrowest OAuth scopes and exact callback URLs.
 - Prefer certificate/JWT or External Credentials where appropriate; avoid embedding client secrets in code.
-- Separate sandbox and production Connected Apps when policies differ.
+- Separate test environment and production Connected Apps when policies differ.
 - Restrict access by permission set and document the persona/application owner.
 - Never commit secrets, private keys, refresh tokens, or generated client secrets.
 

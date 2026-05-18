@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -115,7 +115,7 @@ Canonical authoring contract for production Apex in this project -- classes, tri
 
 **Verified against:** [Apex Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/) - [Apex Security & Sharing](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_security_sharing_understand.htm) - [Sharing keywords](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_bulk_sharing_creating_with_keywords.htm) - [WITH USER_MODE / SYSTEM_MODE](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_enforce_usermode.htm) - [Security.stripInaccessible](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_with_security_stripInaccessible.htm) - [Invocable Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_annotation_InvocableMethod.htm) - [Batch Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_batch_interface.htm) - [Queueable](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_queueing_jobs.htm) - [Named Credentials](https://help.salesforce.com/s/articleView?id=sf.named_credentials_about.htm) - [Governor Limits](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm) - [forcedotcom/sf-skills `generating-apex`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-apex) - [forcedotcom/sf-skills `generating-apex-test`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-apex-test). Last verified 2026-05-16.
 
-**Project defaults:** API `66.0` - Author `Naresh` - Title `Senior Salesforce Developer` - Org `PlusGradeFullSB` - Manifest `manifest/package-case-flow-optimization.xml` - Test classes deferred per project policy (do NOT generate tests inline unless the task is itself a test task).
+**Project defaults:** API `66.0` - Author `the release owner` - Title `Salesforce Developer` - Org `<target-env-alias>` - Manifest `manifest/package.xml` - Test classes deferred per project policy (do NOT generate tests inline unless the task is itself a test task).
 
 ---
 
@@ -143,8 +143,8 @@ Every class, interface, enum, and trigger handler MUST carry this header verbati
 ```apex
 /**
  * Description: <one or two sentences -- what this class does and why it exists>
- * Developer: Naresh
- * Title: Senior Salesforce Developer
+ * Developer: the release owner
+ * Title: Salesforce Developer
  */
 ```
 
@@ -612,7 +612,7 @@ public without sharing class AppLogger {
 
 ## 16. Test Classes
 
-**Project rule:** test classes are deferred until after sandbox functional testing. Do NOT generate tests inline with Apex changes unless the task is explicitly a testing task. When generating, follow the rules below.
+**Project rule:** test classes are deferred until after test-environment functional testing. Do NOT generate tests inline with Apex changes unless the task is explicitly a testing task. When generating, follow the rules below.
 
 | Rule | Detail |
 |---|---|
@@ -689,26 +689,26 @@ public class CaseNotificationClientMock implements HttpCalloutMock {
 ```bash
 # Full check-only deploy with local tests (the project standard)
 sf project deploy start \
-  --manifest manifest/package-case-flow-optimization.xml \
-  --target-org PlusGradeFullSB \
+  --manifest manifest/package.xml \
+  --target-org <target-env-alias> \
   --dry-run --test-level RunLocalTests --wait 60
 
 # Run a specific test class
 sf apex run test \
   --class-names CaseServiceTest \
-  --target-org PlusGradeFullSB \
+  --target-org <target-env-alias> \
   --code-coverage --result-format human --wait 10
 
 # Run multiple test classes
 sf apex run test \
   --class-names CaseServiceTest,CaseSelectorTest,CaseDomainTest \
-  --target-org PlusGradeFullSB \
+  --target-org <target-env-alias> \
   --result-format human
 
 # Retrieve a class before modifying
 sf project retrieve start \
   --metadata "ApexClass:CaseService" \
-  --target-org PlusGradeFullSB
+  --target-org <target-env-alias>
 ```
 
 **Expected noise:** 13 pre-existing Opportunity test failures are known and do not block Case deployment.
@@ -717,7 +717,7 @@ sf project retrieve start \
 
 ## 18. Definition of Done
 
-- [ ] Class header (`Description` / `Developer: Naresh` / `Title: Senior Salesforce Developer`) on every new/modified class
+- [ ] Class header (`Description` / `Developer: the release owner` / `Title: Salesforce Developer`) on every new/modified class
 - [ ] ApexDoc on every public/global/protected method
 - [ ] Sharing keyword explicitly declared (no implicit default)
 - [ ] `without sharing` carries a justification comment on the line above the class declaration
@@ -767,7 +767,7 @@ sf project retrieve start \
 
 ## 20. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org / version / feature combination, record the working alternative here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment / version / feature combination, record the working alternative here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|

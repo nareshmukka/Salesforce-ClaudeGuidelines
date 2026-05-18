@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -232,7 +232,7 @@ Every dynamic value you reference in `<content>` must be declared as an `<inputs
 | `{!$Input:foo}` | Scalar primitive input named `foo` |
 | `{!$Input:caseRecord.Subject}` | Field on an sObject input |
 | `{!$Input:caseRecord.Account.Name}` | Field via one parent-relationship hop |
-| `{!$Input:caseRecord.Account.Owner.Email}` | Two relationship hops (depth-limited; verify in target org) |
+| `{!$Input:caseRecord.Account.Owner.Email}` | Two relationship hops (depth-limited; verify in target environment) |
 | `{!$Context.UserId}` | Running-user Id from the Trust Layer context |
 | `{!$Context.UserLocale}` | Running-user locale |
 
@@ -251,8 +251,8 @@ An Apex grounding capability is just an `@InvocableMethod`-decorated class with 
 ```apex
 /**
  * Description: Provides recent Case comments for a Case grounding capability.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
+ * Developer: the release owner
+ * Title: Salesforce Developer
  */
 public with sharing class CaseRecentCommentsCapability {
 
@@ -415,7 +415,7 @@ Prompt templates have hard dependencies on the Apex/Flow capabilities they groun
 ```bash
 sf project deploy start \
   --manifest manifest/<your-manifest>.xml \
-  --target-org PlusGradeFullSB \
+  --target-org <target-env-alias> \
   --dry-run --test-level RunLocalTests --wait 60
 ```
 
@@ -484,7 +484,7 @@ Three things to verify when wiring a template into an agent:
 
 **Flow:** Use the standard "Prompt Template" action element. Input keys are the bare `<apiName>` values (no `Input:` prefix in Flow). Output is `Prompt Response`.
 
-**Apex:** Invoke via the `ConnectApi.EinsteinLLM.generateMessages*` / `ConnectApi.EinsteinPromptTemplate.generateMessagesForPromptTemplate` namespace (exact method name varies by API version -- verify in target org). Pattern:
+**Apex:** Invoke via the `ConnectApi.EinsteinLLM.generateMessages*` / `ConnectApi.EinsteinPromptTemplate.generateMessagesForPromptTemplate` namespace (exact method name varies by API version -- verify in target environment). Pattern:
 
 ```apex
 ConnectApi.EinsteinPromptTemplateGenerationsInput input =
@@ -554,13 +554,13 @@ Before deploying a prompt template version:
 | 5 | Not testing with edge-case records | Template fails silently with null/empty data -- test with empty fields and edge cases. |
 | 6 | Including PII fields without compliance review | Data privacy violation -- audit all merge fields; exclude PII unless explicitly required and approved. |
 | 7 | No logging implementation | Cannot audit or debug AI outputs -- implement custom logging (metadata only, not PII) or rely on Einstein Trust Layer audit trail. |
-| 8 | Assuming merge field syntax without verifying | Syntax varies by release; wrong syntax = unresolved fields. Always test merge fields in target org. |
+| 8 | Assuming merge field syntax without verifying | Syntax varies by release; wrong syntax = unresolved fields. Always test merge fields in target environment. |
 
 ---
 
 ## 17. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 *(No empirical findings recorded yet. Add as Salesforce doc gaps are discovered. Format: `| # | YYYY-MM-DD | documented approach | what actually works | why / context |`.)*
 

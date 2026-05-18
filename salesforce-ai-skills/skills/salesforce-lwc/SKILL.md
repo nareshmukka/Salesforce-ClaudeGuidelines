@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -602,14 +602,14 @@ Any authenticated user with access to the Apex class can invoke any `@AuraEnable
 
 ## 16. Lightning Web Security (LWS)
 
-LWS is the JavaScript sandbox that replaces Locker Service in modern orgs. Implications:
+LWS is the JavaScript test environment that replaces Locker Service in modern orgs. Implications:
 
 - Each component runs in its own JavaScript realm. DOM and JS objects do not leak across components.
 - Cannot access `window.parent`, `document.body` outside the component, or another component's DOM.
 - Cannot reach into a sibling LWC's shadow DOM.
 - Third-party libraries must be LWS-compatible -- libraries that monkey-patch globals, use cross-realm prototype chains, or rely on `eval` / `Function` constructors often fail.
 - LWS applies surgical distortions to `window` / `document` / `Element`; some library code that touches these APIs needs adjustments or polyfills.
-- Static resources loaded with `loadScript` / `loadStyle` (from `lightning/platformResourceLoader`) run inside the sandbox.
+- Static resources loaded with `loadScript` / `loadStyle` (from `lightning/platformResourceLoader`) run inside the test environment.
 
 When LWS blocks a 3rd-party lib: replace the lib, wrap it in a custom LWC exposing only the needed surface, or check the vendor for an LWS-compatible build.
 
@@ -834,16 +834,16 @@ npm run test:unit -- --testPathPattern caseDashboard
 # Deploy bundle + controller (check-only)
 sf project deploy start \
    --metadata "LightningComponentBundle:caseDashboardContainer,ApexClass:CaseDashboardController" \
-   --target-org PlusGradeFullSB --check-only --wait 60
+   --target-org <target-env-alias> --check-only --wait 60
 
 # Retrieve from org
 sf project retrieve start \
    --metadata "LightningComponentBundle:caseDashboardContainer" \
-   --target-org PlusGradeFullSB
+   --target-org <target-env-alias>
 
 # Run Apex tests for the controller
 sf apex run test --class-names CaseDashboardControllerTest \
-   --target-org PlusGradeFullSB --wait 10 --result-format human
+   --target-org <target-env-alias> --wait 10 --result-format human
 ```
 
 ---
@@ -860,7 +860,7 @@ sf apex run test --class-names CaseDashboardControllerTest \
 | 6 | Exposing raw exception message to user | Poor UX; may expose internal details | Use `AuraHandledException` with user-safe message in Apex |
 | 7 | Missing Jest tests | Bugs go undetected; regressions introduced | Write tests for all four states and all user interactions |
 | 8 | Not calling `refreshApex` after mutations | Stale data shown after save/delete | Store wire result; call `refreshApex(this.wiredResult)` |
-| 9 | Hardcoded record IDs or org-specific values | Breaks in different orgs/sandboxes | Use `@api recordId`, Custom Labels, or Custom Metadata |
+| 9 | Hardcoded record IDs or org-specific values | Breaks in different orgs/test environmentes | Use `@api recordId`, Custom Labels, or Custom Metadata |
 | 10 | Missing `aria-label` on icon-only buttons | Inaccessible to screen reader users | Always set `aria-label` on interactive elements without text |
 | 11 | Mutating `@api` property inside component | Runtime LWC error in strict mode | Copy to internal variable; dispatch event to parent for mutations |
 | 12 | SOQL in Apex without `WITH USER_MODE` | FLS not enforced; users see unauthorized data | Use `WITH USER_MODE` on all queries |
@@ -877,12 +877,12 @@ sf apex run test --class-names CaseDashboardControllerTest \
 
 ## 26. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org / version / feature combination, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment / version / feature combination, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|
 
-*(No entries yet -- append a row the first time a documented pattern fails to behave as expected in this org.)*
+*(No entries yet -- append a row the first time a documented pattern fails to behave as expected in the target environment.)*
 
 ---
 

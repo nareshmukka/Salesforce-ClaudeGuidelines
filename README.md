@@ -6,12 +6,18 @@ Start with:
 - `CODEX.md` for Codex / ChatGPT inline chat usage.
 - `CLAUDE.md` for Claude Code / Claude Agents usage.
 - `salesforce-ai-skills/SKILL_INDEX.md` for the complete routing index.
+- `LESSONS.md` for reusable mistake-prevention rules.
+- `.vscode/settings.json` for VS Code Copilot skill/agent discovery.
 
 ## Skill Coverage
 
 The local library now uses one self-contained `SKILL.md` per folder under `salesforce-ai-skills/skills/`.
 
 There is one root `README.md`, one root `CLAUDE.md`, and one root `CODEX.md`. The skill library itself contains only `SKILL_INDEX.md` plus the `skills/` folders, so agents do not have competing entry points.
+
+VS Code Copilot discovers these skills through `.vscode/settings.json`, which adds `salesforce-ai-skills/skills` to `chat.agentSkillsLocations`. Without that setting, VS Code only scans default folders like `.github/skills`, `.claude/skills`, and `.agents/skills`.
+
+Reusable files must not contain company names, person names, target environment aliases, instance URLs, record IDs, secrets, or customer-specific process names. Use placeholders and keep project-specific facts in local working notes.
 
 Coverage target: **100% practical coverage** against the Salesforce skill domains in `forcedotcom/sf-skills`, grouped into local domain skills instead of mirroring every upstream folder one-for-one.
 
@@ -27,10 +33,11 @@ Every agent should follow this order:
 1. Read `CLAUDE.md` or `CODEX.md`.
 2. Read `salesforce-ai-skills/SKILL_INDEX.md`.
 3. Read `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`.
-4. Read every task-specific `SKILL.md` needed for the request.
-5. Inspect source files before edits.
-6. Make the smallest safe change.
-7. Validate and report security, tests, deployment notes, and rollback notes.
+4. Read `LESSONS.md`.
+5. Read every task-specific `SKILL.md` needed for the request.
+6. Inspect source files before edits.
+7. Make the smallest safe change.
+8. Validate and report security, tests, deployment notes, and rollback notes.
 
 ## Agent Pipelines
 

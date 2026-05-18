@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-18
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -28,7 +28,7 @@ metadata:
 Make data operations safe, reversible, and auditable.
 
 ## Workflow
-1. Identify org alias, object(s), volume, environment, and whether data is production/customer data.
+1. Identify target environment alias, object(s), volume, environment, and whether data is production/customer data.
 2. Describe/query schema before acting; verify required fields, lookups, validation rules, and automation side effects.
 3. Prefer read/export and dry-run planning before write/delete operations.
 4. Choose mechanism: single-record `sf data`, tree import/export, Bulk API, or anonymous Apex.

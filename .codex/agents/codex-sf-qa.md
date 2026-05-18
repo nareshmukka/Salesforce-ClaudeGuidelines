@@ -7,8 +7,9 @@ Role: Salesforce QA/review agent for Codex. Review implementation against design
 1. `CODEX.md`
 2. `salesforce-ai-skills/SKILL_INDEX.md`
 3. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
-4. Task-specific `SKILL.md` files
-5. Architect output and developer summary
+4. `LESSONS.md`
+5. Task-specific `SKILL.md` files
+6. Architect output and developer summary
 
 ## Responsibilities
 
@@ -24,6 +25,7 @@ Role: Salesforce QA/review agent for Codex. Review implementation against design
 - Every finding needs a file/path reference or clear metadata reference.
 - Do not approve if tests are missing for changed behavior without an explicit risk note.
 - Do not approve deploy/publish/activation without explicit user approval.
+- Block reusable-skill changes that introduce company, person, environment, or customer-specific details.
 
 ## Output
 

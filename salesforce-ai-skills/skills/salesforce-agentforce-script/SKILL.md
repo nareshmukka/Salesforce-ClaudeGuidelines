@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -51,7 +51,7 @@ Define concise system policy, clear topic/subagent boundaries, and explicit acti
 ## Upstream Salesforce Skill Patterns
 - Agent Script is its own language; never infer syntax from JavaScript, Python, AppleScript, YAML, or Apex.
 - Create or update an Agent Spec before meaningful agent changes. The spec is the behavioral baseline for subagents, actions, variables, gates, and tests.
-- Always use `sf` agent commands with `--json`; confirm target org before org interaction.
+- Always use `sf` agent commands with `--json`; confirm target environment before org interaction.
 - Diagnose behavior with live preview and traces before editing: validate, preview with live actions, send representative utterances, then inspect routing, action availability, action I/O, and reasoning.
 - Publish is not validation and creates a permanent version. Do not publish or activate until compile validation, live preview, trace review, and explicit user approval are complete.
 - Common syntax guardrails: 4-space indentation, no tabs, capitalized booleans, double-quoted strings, no `else if`, no `instructions:` wrapper under `after_reasoning`, and treat `@inputs`/`@outputs` as short-lived action-scope values.
@@ -212,7 +212,7 @@ Field names matter. The parser rejects unknown fields without helpful errors. **
 system:
    instructions: |
       ROLE
-      You are a server-invoked email-analysis specialist for Plusgrade.
+      You are a server-invoked email-analysis specialist for project.
 
       GROUNDING
       Ground every output in the data returned by Get_Email_Resend_Context.
@@ -242,7 +242,7 @@ system:
 ```
 
 Notes:
-- Section headers (ROLE / GROUNDING / RETURN CONTRACT / DATA PRIVACY / FABRICATION / ERROR DEFAULT / WHAT NOT TO DO) are a Plusgrade convention -- they help reviewers, the LLM happily reads them.
+- Section headers (ROLE / GROUNDING / RETURN CONTRACT / DATA PRIVACY / FABRICATION / ERROR DEFAULT / WHAT NOT TO DO) are a project convention -- they help reviewers, the LLM happily reads them.
 - Use **operational third-person** for server-invoked agents (no "ask the customer..." since there is no customer).
 - For service agents, switch to **second-person imperative** ("Help the customer...", "Ask for their order number").
 - Subagents can override with their own `system:` block when domain expertise differs.
@@ -253,9 +253,9 @@ The `description`, `role`, and `company` fields in `config:` are not cosmetic. T
 
 ```
 config:
-   description: "Server-invoked employee agent that analyzes inbound support emails (STRUCTURED_ANALYSIS mode) and drafts personalized reply emails from named templates (EMAIL_TEMPLATE mode). Clean rebuild of Email_Resend_Agent v15."
-   role: "Senior support specialist for Plusgrade -- fluent in airline/hotel loyalty redemption flows, frequent-flyer programs, and the canonical 20-character confirmation-code format (xxxx-xxxx-xxxx-xxxx-xxxx). Reads emails like a tier-2 agent who has seen the same 30 failure modes a hundred times."
-   company: "Plusgrade -- global airline/hotel loyalty solutions operating across 30+ markets in partnership with major carriers (United, JetBlue, Air Canada, Lufthansa) and hotel groups (Hilton, Hyatt, IHG). The core product is point-based redemption and ancillary-upsell tooling that integrates with carrier reservation systems via the Plusgrade platform."
+   description: "Server-invoked employee agent that analyzes inbound support emails (STRUCTURED_ANALYSIS mode) and drafts personalized reply emails from named templates (EMAIL_TEMPLATE mode). Clean rebuild of Example_Service_Agent v15."
+   role: "Senior support specialist for project -- fluent in airline/hotel loyalty redemption flows, frequent-flyer programs, and the canonical 20-character confirmation-code format (xxxx-xxxx-xxxx-xxxx-xxxx). Reads emails like a tier-2 agent who has seen the same 30 failure modes a hundred times."
+   company: "<company/domain context relevant to the assistant>"
 ```
 
 Three sentences of company context costs nothing and meaningfully grounds the agent in the right vocabulary.
@@ -664,7 +664,7 @@ A new or modified agent is NOT done until every item is true:
 | 1 | 2026-05-15 | Salesforce Agentforce Employee Agent help-doc topic-instruction style uses second-person imperative ("Ask the customer...", "Say to the user...") | For server-invoked employee agents (no live conversation), the conversational style doesn't apply. Reframe in operational third-person: "Extract caseId from the user message", "Return JSON with these keys", "Do not include sign-off" | This org's server-invoked EmployeeAgents are programmatically called from Apex. The agent's messages never reach a human. Help-doc style assumes a user-facing copilot |
 | 2 | 2026-05-16 | Welcome messages support `{!@variables.x}` template interpolation | Welcome message renderer runs BEFORE variables initialize. Interpolation literals appear in the rendered text. Use static welcome; put personalized greeting in the first subagent's `reasoning.instructions:` (Issue #11) | Discovered when a draft welcome string contained `{!@variables.case_id}` and shipped to a test session with literal `{!@variables.case_id}` text |
 | 3 | 2026-05-16 | Welcome messages support multi-line content | Line breaks are stripped on render. Multi-line greetings must live in the first subagent's instructions (Issue #12) | |
-| 4 | 2026-05-16 | The 7-section "constitution" header style (ROLE / GROUNDING / RETURN CONTRACT / DATA PRIVACY / FABRICATION / ERROR DEFAULT / WHAT NOT TO DO) is documented as best practice for agent `system.instructions` | The headers are a Plusgrade convention modeled on `Global_Care_Service_Agent_Script.agent`. They are NOT documented by Salesforce -- but they compile fine as prose and make the agent's responsibilities reviewable. Keep them; new authoring matches the convention | |
+| 4 | 2026-05-16 | The 7-section "constitution" header style (ROLE / GROUNDING / RETURN CONTRACT / DATA PRIVACY / FABRICATION / ERROR DEFAULT / WHAT NOT TO DO) is documented as best practice for agent `system.instructions` | The headers are a project convention modeled on `Global_Care_Service_Agent_Script.agent`. They are NOT documented by Salesforce -- but they compile fine as prose and make the agent's responsibilities reviewable. Keep them; new authoring matches the convention | |
 
 ---
 
@@ -801,7 +801,7 @@ Top-level blocks must appear in this order. Wrong order = compile error.
 ```
 system:
    instructions: |
-      You are a server-invoked email-analysis specialist for Plusgrade.
+      You are a server-invoked email-analysis specialist for project.
       Ground every output in Get_Email_Resend_Context outputs -- never invent
       Case data, customer email content, or email history.
       Return JSON only when in STRUCTURED_ANALYSIS mode.
@@ -825,8 +825,8 @@ config:
    developer_name: "Email_Analysis_Agent"          # REQUIRED -- API name. Must match directory + filename exactly.
    agent_label: "Email Analysis Agent"             # Optional display name
    description: "Server-invoked agent that analyzes inbound support emails..."
-   role: "AI assistant for Plusgrade support reps."
-   company: "Plusgrade -- global airline/hotel loyalty programs operating across 30+ markets, partnering with major carriers and hotel groups."
+   role: "AI assistant for project support reps."
+   company: "<company/domain context relevant to the assistant>"
    agent_type: "AgentforceEmployeeAgent"           # or "AgentforceServiceAgent"
    default_agent_user: "agent.user@example.com"   # REQUIRED for ServiceAgent. PROHIBITED for EmployeeAgent.
    enable_enhanced_event_logs: True
@@ -1306,17 +1306,17 @@ Before running `sf agent validate authoring-bundle`, verify:
 
 ## 16. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|
-| 1 | 2026-05-15 | `date` is a first-class scalar variable type for datetime values | For an action output that Apex returns as `Datetime`, `sf agent retrieve` writes it back as `type: object` + `complex_data_type_name: "lightning__dateTimeStringType"`. Both compile and deploy at API v66.0. The retrieved form round-trips correctly but is the wrong form for new authoring | Observed in `Email_Resend_Agent.agent` and `UnitedMiles_Refund_Agent_v2.agent` on 2026-05-15 (FullSB, Spring '26 / v66.0). Standardise NEW authoring on `type: date`; accept the `object + complex_data_type_name` form when retrieved |
-| 2 | 2026-05-15 | `id` is a first-class scalar type for Salesforce record IDs | Three idioms exist in this org's bundles for the same semantic: (a) `type: string`; (b) `type: id` (canonical); (c) `type: object` + `complex_data_type_name: "lightning__recordIdType"`. Form (c) is what `sf agent retrieve` writes back | Standardise NEW authoring on form (b); accept form (c) when retrieved |
+| 1 | 2026-05-15 | `date` is a first-class scalar variable type for datetime values | For an action output that Apex returns as `Datetime`, `sf agent retrieve` writes it back as `type: object` + `complex_data_type_name: "lightning__dateTimeStringType"`. Both compile and deploy at API v66.0. The retrieved form round-trips correctly but is the wrong form for new authoring | Observed in `Example_Service_Agent.agent` and `Example_Refund_Agent_v2.agent` on 2026-05-15 (<target-env-alias>, Spring '26 / v66.0). Standardise NEW authoring on `type: date`; accept the `object + complex_data_type_name` form when retrieved |
+| 2 | 2026-05-15 | `id` is a first-class scalar type for Salesforce record IDs | Three idioms exist in the target environment's bundles for the same semantic: (a) `type: string`; (b) `type: id` (canonical); (c) `type: object` + `complex_data_type_name: "lightning__recordIdType"`. Form (c) is what `sf agent retrieve` writes back | Standardise NEW authoring on form (b); accept form (c) when retrieved |
 | 3 | 2026-05-16 | Salesforce Agentforce Employee Agent Builder UI documentation prescribes per-topic `SCOPE`, `INSTRUCTIONS`, `GUARDRAILS`, `USER INPUT EXAMPLES` | The `.agent` DSL has no separate `scope:` or `guardrails:` keys. Convention: Classification + Scope -> `subagent.description:`; Instructions -> `reasoning.instructions:`; Guardrails -> trailing `\| GUARDRAILS:` block; User Input Examples -> `start_agent` transition `description:` strings | Builder UI structure doesn't map 1:1 to DSL keys |
-| 4 | 2026-05-15 | Some sketches imply a `contains` (substring-match) operator in `->` blocks | No `contains` operator exists. Documented operators only: `==`, `!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`, `and`, `or`, `not`. Use LLM-mediated routing instead | Discovered while authoring `Email_Analysis_Agent` two-mode router on PlusGradeFullSB, Spring '26 |
+| 4 | 2026-05-15 | Some sketches imply a `contains` (substring-match) operator in `->` blocks | No `contains` operator exists. Documented operators only: `==`, `!=`, `<`, `<=`, `>`, `>=`, `is`, `is not`, `and`, `or`, `not`. Use LLM-mediated routing instead | Discovered while authoring `Email_Analysis_Agent` two-mode router on <target-env-alias>, Spring '26 |
 | 5 | 2026-05-16 | Live SF Help pages (`help.salesforce.com`) render via JavaScript | WebFetch returns CSS error / empty body. The canonical body of knowledge lives in `developer.salesforce.com/docs/ai/agentforce/guide/*` plus the `forcedotcom/sf-skills` and `trailheadapps/agent-script-recipes` repos -- both deeper than the live Help pages | Browse the cloned repos for ground truth. WebFetch the developer.salesforce.com doc pages with very targeted prompts; expect the small summarization model to return partial content -- use multiple passes per page |
-| 6 | 2026-05-16 | `type: id` is canonical for record-Id action inputs across all action targets per Section 6 type matrix and Finding #2 above | `type: id` is accepted ONLY for `apex://` targets (Apex `Id` is a String subtype and tolerates the agent's `id` declaration). For `flow://` targets, the input type MUST match the Flow variable's declared type -- typically `type: string` for record-Id Text variables. The Atlas Reasoning Engine validates Flow input contracts at `sf agent preview start --use-live-actions` session-start time and rejects mismatches with `PreviewStartFailed: Validation failed for action 'X' due to invalid data type for the input parameter 'Y'. To fix, update the data type to 'object' type and 'complex_data_type_name' to 'lightning__textType'`. The legacy `Email_Resend_Agent` v15 used `type: string` on `Get_Image_Confirmation.emailMessageId` (flow target) and worked; the v2-v5 rebuild standardised on `type: id` and broke at first live-preview attempt | Discovered during `Email_Analysis_Agent` v5->v6 cutover testing on PlusGradeFullSB, Spring '26 / API v66.0. The Empirical Finding #2 recommendation to standardise on `type: id` applies to Apex targets only -- Flow targets must match the Flow's variable type. Updated v6 to `string` on the one flow-target input; remaining `apex://` action inputs stay on `type: id` |
-| 7 | 2026-05-16 | `sf agent preview send --json --authoring-bundle <Name>` returns the agent's final response in `result.messages[].message` | For a multi-step subagent (router -> subagent -> action loop), the CLI's `messages` array contains ONLY the first post-transition LLMStep response. Subsequent reasoning iterations (FunctionStep action calls, additional LLMSteps, final PlannerResponseStep summary) are NOT aggregated into the CLI's `messages` payload. Trace inspection shows `tool_invocations: null` on the first subagent LLMStep even when later iterations (visible only in raw trace JSON or Builder UI) DO invoke actions and produce the final answer. This produced a false-negative "agent didn't call action" QA verdict during the Email_Analysis_Agent v6 cutover that was later disproved by Builder UI test + production trigger-path verification (EmailMessage 02sAs000007HOGPIA4 on Case 500As00000WAZa1IAH, image OCR extraction returned canonical confirmation code, full SFMC callout success). **Use Agentforce Builder UI OR a real Apex `Agent.generateAiAgentResponse` invocation for end-to-end functional validation. CLI `preview send` is a session-debugger surface, not a functional-test surface** | Production trigger-path verification on PlusGradeFullSB 2026-05-16 confirmed the v6 agent works end-to-end after CLI false-negative reports; the empirical lesson is the CLI's response-aggregation limitation |
+| 6 | 2026-05-16 | `type: id` is canonical for record-Id action inputs across all action targets per Section 6 type matrix and Finding #2 above | `type: id` is accepted ONLY for `apex://` targets (Apex `Id` is a String subtype and tolerates the agent's `id` declaration). For `flow://` targets, the input type MUST match the Flow variable's declared type -- typically `type: string` for record-Id Text variables. The Atlas Reasoning Engine validates Flow input contracts at `sf agent preview start --use-live-actions` session-start time and rejects mismatches with `PreviewStartFailed: Validation failed for action 'X' due to invalid data type for the input parameter 'Y'. To fix, update the data type to 'object' type and 'complex_data_type_name' to 'lightning__textType'`. The legacy `Example_Service_Agent` v15 used `type: string` on `Get_Image_Confirmation.emailMessageId` (flow target) and worked; the v2-v5 rebuild standardised on `type: id` and broke at first live-preview attempt | Discovered during `Email_Analysis_Agent` v5->v6 cutover testing on <target-env-alias>, Spring '26 / API v66.0. The Empirical Finding #2 recommendation to standardise on `type: id` applies to Apex targets only -- Flow targets must match the Flow's variable type. Updated v6 to `string` on the one flow-target input; remaining `apex://` action inputs stay on `type: id` |
+| 7 | 2026-05-16 | `sf agent preview send --json --authoring-bundle <Name>` returns the agent's final response in `result.messages[].message` | For a multi-step subagent (router -> subagent -> action loop), the CLI's `messages` array contains ONLY the first post-transition LLMStep response. Subsequent reasoning iterations (FunctionStep action calls, additional LLMSteps, final PlannerResponseStep summary) are NOT aggregated into the CLI's `messages` payload. Trace inspection shows `tool_invocations: null` on the first subagent LLMStep even when later iterations (visible only in raw trace JSON or Builder UI) DO invoke actions and produce the final answer. This produced a false-negative "agent didn't call action" QA verdict during the Email_Analysis_Agent v6 cutover that was later disproved by Builder UI test + production trigger-path verification (EmailMessage 02sAs000007HOGPIA4 on Case 500As00000WAZa1IAH, image OCR extraction returned canonical confirmation code, full SFMC callout success). **Use Agentforce Builder UI OR a real Apex `Agent.generateAiAgentResponse` invocation for end-to-end functional validation. CLI `preview send` is a session-debugger surface, not a functional-test surface** | Production trigger-path verification on <target-env-alias> 2026-05-16 confirmed the v6 agent works end-to-end after CLI false-negative reports; the empirical lesson is the CLI's response-aggregation limitation |
 
 ---
 

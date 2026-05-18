@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -625,10 +625,10 @@ Two modes -- ad-hoc preview (Mode A) and persistent test suites (Mode B). Mode A
 ### Mode A -- `sf agent preview`
 
 ```bash
-SESSION_ID=$(sf agent preview start --json --authoring-bundle MyAgent -o <alias> | jq -r '.result.sessionId')
+SESSION_ID=$(sf agent preview start --json --authoring-bundle MyAgent -o <target-env-alias> | jq -r '.result.sessionId')
 sf agent preview send --json --session-id $SESSION_ID --authoring-bundle MyAgent \
-  --utterance "test utterance" -o <alias>
-sf agent preview end  --json --session-id $SESSION_ID --authoring-bundle MyAgent -o <alias>
+  --utterance "test utterance" -o <target-env-alias>
+sf agent preview end  --json --session-id $SESSION_ID --authoring-bundle MyAgent -o <target-env-alias>
 ```
 
 Traces land at `.sfdx/agents/<BundleName>/sessions/<sessionId>/traces/<planId>.json`. `--authoring-bundle` must appear on **all three** subcommands. Strip control chars before piping JSON to `jq`. Always run safety probes (PII, prompt injection, off-topic) and emit a verdict: **SAFE / UNSAFE / NEEDS_REVIEW**.
@@ -649,10 +649,10 @@ testCases:
 ```
 
 ```bash
-sf agent test create  --json --spec tests/MyAgent-testing-center.yaml --api-name MyAgentSuite -o <alias>
-sf agent test run     --json --api-name MyAgentSuite --wait 10 --result-format json -o <alias> | tee /tmp/run.json
+sf agent test create  --json --spec tests/MyAgent-testing-center.yaml --api-name MyAgentSuite -o <target-env-alias>
+sf agent test run     --json --api-name MyAgentSuite --wait 10 --result-format json -o <target-env-alias> | tee /tmp/run.json
 JOB_ID=$(jq -r '.result.runId' /tmp/run.json)
-sf agent test results --json --job-id "$JOB_ID" --result-format json -o <alias>
+sf agent test results --json --job-id "$JOB_ID" --result-format json -o <target-env-alias>
 ```
 
 **Key rules.**
@@ -698,41 +698,41 @@ Tests run under the same limits as production. Inflated tests fail at unrelated 
 # Single test class with coverage (development loop)
 sf apex run test \
   --class-names CaseServiceTest \
-  --target-org <alias> --code-coverage --result-format human
+  --target-org <target-env-alias> --code-coverage --result-format human
 
 # Specific methods (fastest fix loop)
 sf apex run test \
   --tests CaseServiceTest.shouldCreateCase_WhenInputIsValid \
-  --target-org <alias>
+  --target-org <target-env-alias>
 
 # Full local-tests run with coverage (pre-PR)
 sf apex run test \
-  --test-level RunLocalTests --target-org <alias> \
+  --test-level RunLocalTests --target-org <target-env-alias> \
   --code-coverage --result-format json \
   --output-dir ./test-results --wait 30
 
 # Detailed line-by-line coverage
 sf apex run test --class-names CaseServiceTest \
-  --target-org <alias> --code-coverage --detailed-coverage
+  --target-org <target-env-alias> --code-coverage --detailed-coverage
 
 # Check-only deploy gate
 sf project deploy start \
-  --manifest manifest/package-case-flow-optimization.xml \
-  --target-org <alias> --dry-run \
+  --manifest manifest/package.xml \
+  --target-org <target-env-alias> --dry-run \
   --test-level RunLocalTests --wait 60
 
 # Async + poll
-sf apex run test --test-level RunLocalTests --target-org <alias> --async
-sf apex get test --test-run-id <runId> --target-org <alias>
+sf apex run test --test-level RunLocalTests --target-org <target-env-alias> --async
+sf apex get test --test-run-id <runId> --target-org <target-env-alias>
 
 # LWC Jest
 npm run test:unit -- --coverage
 npx lwc-jest force-app/main/default/lwc/<bundle>/__tests__/<bundle>.test.js --coverage
 
 # Agentforce
-sf agent test create  --json --spec <spec.yaml> --api-name <Suite> -o <alias>
-sf agent test run     --json --api-name <Suite> --wait 10 --result-format json -o <alias>
-sf agent test results --json --job-id <runId> --result-format json -o <alias>
+sf agent test create  --json --spec <spec.yaml> --api-name <Suite> -o <target-env-alias>
+sf agent test run     --json --api-name <Suite> --wait 10 --result-format json -o <target-env-alias>
+sf agent test results --json --job-id <runId> --result-format json -o <target-env-alias>
 ```
 
 ---
@@ -780,7 +780,7 @@ sf agent test results --json --job-id <runId> --result-format json -o <alias>
 
 ## 20. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|

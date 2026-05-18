@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -104,7 +104,7 @@ Use consistent API naming suffixes (__c, __mdt). Prefer DeveloperName references
 # Metadata Design Guidelines
 
 **Version:** 3.0 (May 2026)
-**Developer:** Naresh | Senior Salesforce Developer
+**Developer:** the release owner | Salesforce Developer
 **Purpose:** Authoritative reference for designing and deploying Salesforce schema metadata -- custom objects, custom fields, validation rules, custom metadata types, record types, and the surrounding access/integration concerns. Attach when creating or modifying any `.object-meta.xml`, `.field-meta.xml`, `.validationRule-meta.xml`, `.tab-meta.xml`, or CMDT bundle.
 
 **Verified against:** [Salesforce Skills -- generating-custom-object](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-object/SKILL.md) - [generating-custom-field](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-field/SKILL.md) - [generating-validation-rule](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-validation-rule/SKILL.md) - [generating-custom-tab](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-tab/SKILL.md) - [generating-custom-lightning-type](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-lightning-type/SKILL.md) - [CustomObject Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_customobject.htm) - [CustomField Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/customobject.htm) - [Custom Metadata Types Apex Reference](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_class_custom_metadata.htm). Last verified 2026-05-16.
@@ -442,7 +442,7 @@ Every rule MUST have:
 
 ### Bypass pattern
 
-Every validation rule in this org wraps its condition in `NOT($Permission.<CustomPermission>)` so trusted users (support leads, integration users, admins) can override. The Custom Permission must be deployed **before** the validation rule.
+Every validation rule in the target environment wraps its condition in `NOT($Permission.<CustomPermission>)` so trusted users (support leads, integration users, admins) can override. The Custom Permission must be deployed **before** the validation rule.
 
 ```
 AND(
@@ -493,7 +493,7 @@ CMDT is the **default mechanism** for configuration data in modern Salesforce or
 - Deployable via `package.xml` (data ships with metadata).
 - Readable in Apex, Flow, Validation Rules, and Formula fields with no DML governor consumption.
 - Version-controlled in source-tracked projects.
-- Available immediately in every sandbox and production after deployment.
+- Available immediately in every test environment and production after deployment.
 
 ### When to use CMDT
 
@@ -604,7 +604,7 @@ Each additional Record Type multiplies maintenance -- more layouts, more permiss
 
 ### Referencing Record Types in code -- NEVER hardcode IDs
 
-Record Type IDs differ between sandbox and production. Hardcoding an ID guarantees breakage on deployment.
+Record Type IDs differ between test environment and production. Hardcoding an ID guarantees breakage on deployment.
 
 ```apex
 // CORRECT -- resolved by DeveloperName at runtime
@@ -721,7 +721,7 @@ See Section 3 4 for the field-level rules. Integration-design concerns:
 
 ### Cross-org migration
 
-External IDs are the foundation of org-to-org data migration. When seeding a new sandbox: export records with the External ID, import via `upsert`, and references resolve automatically. Without External IDs, every Lookup field must be re-mapped manually.
+External IDs are the foundation of org-to-org data migration. When seeding a new test environment: export records with the External ID, import via `upsert`, and references resolve automatically. Without External IDs, every Lookup field must be re-mapped manually.
 
 ---
 
@@ -859,26 +859,26 @@ Undocumented metadata is toxic debt. Auditors read descriptions first during com
 
 ```bash
 # Retrieve one custom object
-sf project retrieve start --metadata "CustomObject:SupportTicket__c" --target-org PlusGradeFullSB
+sf project retrieve start --metadata "CustomObject:SupportTicket__c" --target-org <target-env-alias>
 
 # Retrieve CMDT object + records
-sf project retrieve start --metadata "CustomObject:CMDT_Integration__mdt" --metadata "CustomMetadata" --target-org PlusGradeFullSB
+sf project retrieve start --metadata "CustomObject:CMDT_Integration__mdt" --metadata "CustomMetadata" --target-org <target-env-alias>
 
 # Dry-run deploy -- REQUIRED before real deploy
-sf project deploy start --source-dir force-app/main/default/objects --dry-run --target-org PlusGradeFullSB
+sf project deploy start --source-dir force-app/main/default/objects --dry-run --target-org <target-env-alias>
 
 # Real deploy
-sf project deploy start --source-dir force-app/main/default/objects --target-org PlusGradeFullSB
+sf project deploy start --source-dir force-app/main/default/objects --target-org <target-env-alias>
 
 # Inventory custom objects
-sf data query --query "SELECT QualifiedApiName, Label, Description FROM EntityDefinition WHERE IsCustomizable = true ORDER BY QualifiedApiName" --target-org PlusGradeFullSB
+sf data query --query "SELECT QualifiedApiName, Label, Description FROM EntityDefinition WHERE IsCustomizable = true ORDER BY QualifiedApiName" --target-org <target-env-alias>
 
 # Inventory fields on Case
-sf data query --query "SELECT QualifiedApiName, Label, DataType, Description, InlineHelpText FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = 'Case' ORDER BY QualifiedApiName" --target-org PlusGradeFullSB
+sf data query --query "SELECT QualifiedApiName, Label, DataType, Description, InlineHelpText FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = 'Case' ORDER BY QualifiedApiName" --target-org <target-env-alias>
 
 # List record types / validation rules
-sf data query --query "SELECT Id, Name, DeveloperName, SobjectType, IsActive FROM RecordType ORDER BY SobjectType, DeveloperName" --target-org PlusGradeFullSB
-sf data query --query "SELECT Id, ValidationName, Active, Description, EntityDefinition.QualifiedApiName FROM ValidationRule ORDER BY EntityDefinition.QualifiedApiName, ValidationName" --target-org PlusGradeFullSB
+sf data query --query "SELECT Id, Name, DeveloperName, SobjectType, IsActive FROM RecordType ORDER BY SobjectType, DeveloperName" --target-org <target-env-alias>
+sf data query --query "SELECT Id, ValidationName, Active, Description, EntityDefinition.QualifiedApiName FROM ValidationRule ORDER BY EntityDefinition.QualifiedApiName, ValidationName" --target-org <target-env-alias>
 ```
 
 ---
@@ -909,7 +909,7 @@ Metadata work is complete when all of the following hold:
 
 | Mistake | Why It's Wrong | Correct Approach |
 |---|---|---|
-| Hardcoding Record Type IDs | IDs differ between sandbox and production -- code breaks on deployment | Always use `getRecordTypeInfosByDeveloperName()` or CMDT |
+| Hardcoding Record Type IDs | IDs differ between test environment and production -- code breaks on deployment | Always use `getRecordTypeInfosByDeveloperName()` or CMDT |
 | Creating Record Types for display-only differences | Adds maintenance overhead; record types should reflect different business processes | Use a custom field + conditional formatting instead |
 | No help text or description on fields | Metadata becomes undocumented and unmaintainable | Every field must have help text and description before merge |
 | Using Custom Settings for new configuration | Not deployable via package.xml; not accessible in formulas | Use CMDT instead |
@@ -924,7 +924,7 @@ Metadata work is complete when all of the following hold:
 
 ## 18. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 *(No entries yet -- append as encountered.)*
 

@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -616,39 +616,39 @@ Deploy in this order. Reversing any step causes referenced-component-missing err
 9. Permission Set Assignments               (manual, post-deploy, via UI or apex script)
 ```
 
-The Case Flow Migration project's manifest (`manifest/package-case-flow-optimization.xml`) deploys PS metadata alongside Flows and Apex -- no separate assignment step is included; Naresh handles assignment in sandbox after validation. See `CLAUDE.md` Section 4 11. Validation Commands
+The Salesforce delivery guidance project's manifest (`manifest/package.xml`) deploys PS metadata alongside Flows and Apex -- no separate assignment step is included; the release owner handles assignment in test environment after validation. See `CLAUDE.md` Section 4 11. Validation Commands
 
 ```bash
 # Dry-run a PS-only deploy
 sf project deploy start \
    --source-dir force-app/main/default/permissionSets \
    --dry-run --test-level RunLocalTests \
-   --target-org PlusGradeFullSB --wait 60
+   --target-org <target-env-alias> --wait 60
 
 # Deploy PS + PSG + custom permissions together
 sf project deploy start \
    --metadata "PermissionSet,PermissionSetGroup,MutingPermissionSet,CustomPermission" \
-   --target-org PlusGradeFullSB
+   --target-org <target-env-alias>
 
 # Retrieve a single PS for review
 sf project retrieve start \
    --metadata "PermissionSet:PS_SupportAgent" \
-   --target-org PlusGradeFullSB
+   --target-org <target-env-alias>
 
 # Who has this PS today?
 sf data query \
    --query "SELECT Assignee.Username, Assignee.Name FROM PermissionSetAssignment WHERE PermissionSet.Name = 'PS_SupportAgent'" \
-   --target-org PlusGradeFullSB
+   --target-org <target-env-alias>
 
 # Verify a custom permission is granted on a PS
 sf data query \
    --query "SELECT Id, SetupEntityType, SetupEntityId FROM SetupEntityAccess WHERE SetupEntityType = 'CustomPermission' AND ParentId IN (SELECT Id FROM PermissionSet WHERE Name = 'PS_SupportAgent')" \
-   --target-org PlusGradeFullSB
+   --target-org <target-env-alias>
 
 # Which PSG references this component PS?
 sf data query \
    --query "SELECT PermissionSetGroup.DeveloperName FROM PermissionSetGroupComponent WHERE PermissionSet.Name = 'PS_Object_RW_Case'" \
-   --target-org PlusGradeFullSB
+   --target-org <target-env-alias>
 ```
 
 ---
@@ -663,11 +663,11 @@ A Permission Set / PSG / Muting PS is complete when:
 - [ ] No `viewAllRecords` / `modifyAllRecords` / `ViewAllData` / `ModifyAllData` / `ManageUsers` without architect sign-off
 - [ ] No required fields, no formula `editable=true` entries in `<fieldPermissions>`
 - [ ] Standard tabs use `standard-` prefix; custom object tabs include `__c`
-- [ ] Apex/Flow references match metadata that exists in the org
+- [ ] Apex/Flow references match metadata that exists in the target environment
 - [ ] For agent PS: `<agentAccesses>` plus a `<classAccesses>` entry for every action's `apex://` target
 - [ ] If composed into a PSG: PSG `<status>` set to `Updated`
 - [ ] If muting: muting semantics (true = remove) verified against component PS
-- [ ] Dry-run deploy passes with zero component errors against `PlusGradeFullSB`
+- [ ] Dry-run deploy passes with zero component errors against `<target-env-alias>`
 
 ---
 
@@ -695,7 +695,7 @@ A Permission Set / PSG / Muting PS is complete when:
 
 ## 14. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|

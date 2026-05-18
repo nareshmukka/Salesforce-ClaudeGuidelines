@@ -7,11 +7,22 @@ Default operating contract for Codex/ChatGPT inline chat in this repository.
 1. Read this file.
 2. Read `salesforce-ai-skills/SKILL_INDEX.md`.
 3. Read `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`.
-4. Read task skill(s) from `salesforce-ai-skills/skills/<skill-name>/SKILL.md`.
-5. Inspect source files before proposing edits.
-6. Make smallest safe local change.
-7. Validate locally.
-8. Summarize security/testing/rollback.
+4. Read `LESSONS.md`.
+5. Read task skill(s) from `salesforce-ai-skills/skills/<skill-name>/SKILL.md`.
+6. Inspect source files before proposing edits.
+7. Make smallest safe local change.
+8. Validate locally.
+9. Summarize security/testing/rollback.
+
+## Portability rules
+- Do not add company names, person names, target environment aliases, instance URLs, record IDs, secrets, or customer-specific process names to shared skills or agents.
+- Use placeholders such as `<target-env-alias>`, `<manifest-path>`, `<agent-api-name>`, and `<object-api-name>` in reusable examples.
+- Put project-specific details in local working notes or implementation files, not in reusable agent/skill instructions.
+
+## VS Code Copilot discovery
+VS Code Copilot discovers project skills from default folders such as `.github/skills`, `.claude/skills`, and `.agents/skills`. This repo stores skills in `salesforce-ai-skills/skills`, so `.vscode/settings.json` adds that folder to `chat.agentSkillsLocations`.
+
+If skills do not appear, run `Chat: Open Customizations`, open the Skills tab, or type `/skills` in chat. Then reload the window after changing settings.
 
 ## Skill routing quick map
 - Apex: `salesforce-ai-skills/skills/salesforce-apex/SKILL.md`

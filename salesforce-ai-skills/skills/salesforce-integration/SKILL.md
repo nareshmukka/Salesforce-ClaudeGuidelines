@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -101,7 +101,7 @@ Use Named Credentials/External Credentials; never embed secrets. Define request/
 
 # Integration Guidelines -- Canonical Reference
 
-Authoritative rulebook for outbound and inbound Salesforce integrations in the Plusgrade org. Covers Named Credentials + External Credentials, Apex HTTP callouts, Platform Events, Change Data Capture, async patterns, idempotency, retry/circuit-breaker, observability, and AppExchange/MuleSoft considerations.
+Authoritative rulebook for outbound and inbound Salesforce integrations in the project org. Covers Named Credentials + External Credentials, Apex HTTP callouts, Platform Events, Change Data Capture, async patterns, idempotency, retry/circuit-breaker, observability, and AppExchange/MuleSoft considerations.
 
 **Verified against:** [Apex Callouts](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_callouts.htm) - [Named Credentials](https://help.salesforce.com/s/articleView?id=sf.named_credentials_about.htm) - [External Credentials](https://help.salesforce.com/s/articleView?id=sf.external_credentials.htm) - [Platform Events Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.platform_events.meta/platform_events/) - [Change Data Capture Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.change_data_capture.meta/change_data_capture/) - [Continuation Class](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_continuation_overview.htm) - [Pub/Sub API](https://developer.salesforce.com/docs/platform/pub-sub-api/overview.html) - [Composite API](https://developer.salesforce.com/docs/atlas.en-us.api_rest.meta/api_rest/resources_composite_composite.htm) - [forcedotcom/sf-skills `building-sf-integrations`](https://github.com/forcedotcom/sf-skills/tree/main/skills/building-sf-integrations) - [forcedotcom/sf-skills `configuring-connected-apps`](https://github.com/forcedotcom/sf-skills/tree/main/skills/configuring-connected-apps). Last verified 2026-05-16.
 
@@ -157,7 +157,7 @@ As of API 61+ (Spring '23 and later), Salesforce uses a split model: a **Named C
 <NamedCredential xmlns="http://soap.sforce.com/2006/04/metadata">
    <fullName>MuleSoft_Case_API</fullName>
    <label>MuleSoft Case API</label>
-   <endpoint>https://mulesoft.plusgrade.com</endpoint>
+   <endpoint>https://api.example.com</endpoint>
    <externalCredential>MuleSoft_Case_API_EC</externalCredential>
    <generateAuthorizationHeader>true</generateAuthorizationHeader>
    <allowMergeFieldsInBody>false</allowMergeFieldsInBody>
@@ -515,7 +515,7 @@ Use External Services when the API has a clean OpenAPI spec and Flow needs to in
 
 ### 13.1 MuleSoft (or any middleware)
 
-When Plusgrade has MuleSoft (or AWS API Gateway, or another integration bus) between Salesforce and downstream systems, treat the middleware as the single external system from Salesforce's POV -- one Named Credential, one HTTP client class. Fan-out, transformation, and per-downstream retry live in the middleware, not in Apex.
+When project has MuleSoft (or AWS API Gateway, or another integration bus) between Salesforce and downstream systems, treat the middleware as the single external system from Salesforce's POV -- one Named Credential, one HTTP client class. Fan-out, transformation, and per-downstream retry live in the middleware, not in Apex.
 
 **Use middleware when:** more than one downstream system needs the same payload, complex transformation/routing exists, or the downstream system has rate limits requiring queueing.
 
@@ -667,20 +667,20 @@ An integration is shippable only when all of the following are true:
 
 ```bash
 # Retrieve current Named Credential + External Credential pair
-sf project retrieve start --target-org <alias> \
+sf project retrieve start --target-org <target-env-alias> \
    --metadata "NamedCredential:MuleSoft_Case_API,ExternalCredential:MuleSoft_Case_API_EC"
 
 # Check-only deploy with full local tests
-sf project deploy start --target-org <alias> \
+sf project deploy start --target-org <target-env-alias> \
    --manifest manifest/package.xml \
    --dry-run --test-level RunLocalTests --wait 60
 
 # Run integration test classes
-sf apex run test --target-org <alias> --result-format human --wait 10 \
+sf apex run test --target-org <target-env-alias> --result-format human --wait 10 \
    --class-names MuleSoftCaseApiClientTest,MuleSoftCaseSyncQueueableTest
 
 # Inspect last hour of AppLog rows
-sf data query --target-org <alias> --query "SELECT IntegrationName__c, Status__c, \
+sf data query --target-org <target-env-alias> --query "SELECT IntegrationName__c, Status__c, \
    StatusCode__c, DurationMs__c, CorrelationId__c, ErrorMessage__c, CreatedDate \
    FROM AppLog__c WHERE IntegrationName__c = 'MuleSoft_Case_API' \
    AND CreatedDate = LAST_N_HOURS:1 ORDER BY CreatedDate DESC LIMIT 50"
@@ -712,7 +712,7 @@ The following are frequent errors made by AI-generated integration code. Every c
 
 ## 22. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|

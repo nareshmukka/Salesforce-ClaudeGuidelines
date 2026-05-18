@@ -10,7 +10,7 @@ compatibility:
 metadata:
   version: 2.0.0
   last_updated: 2026-05-16
-  owner: Naresh Salesforce AI Skills Library
+  owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
@@ -171,7 +171,7 @@ Prefer extension over custom controller whenever a standard object is involved -
 ```apex
 /**
  * Description: Renders Case data as a downloadable PDF.
- * Developer: Naresh | Senior Salesforce Developer
+ * Developer: the release owner | Salesforce Developer
  * Created: 2026-04
  * Migration: blocked by lack of native LWC PDF rendering. Review Q4 2026.
  */
@@ -316,18 +316,18 @@ JavaScript Remoting (`@RemoteAction`) is supported for legacy pages but **not fo
 
 ```bash
 # Validate (dry-run) -- manifest-driven
-sf project deploy start --manifest manifest/package-case-flow-optimization.xml \
-   --target-org PlusGradeFullSB --dry-run --test-level RunLocalTests --wait 60
+sf project deploy start --manifest manifest/package.xml \
+   --target-org <target-env-alias> --dry-run --test-level RunLocalTests --wait 60
 
 # Deploy a specific page + controller
 sf project deploy start --metadata ApexPage:CasePdfPage --metadata ApexClass:CasePdfController \
-   --target-org PlusGradeFullSB
+   --target-org <target-env-alias>
 
 # Retrieve all VF pages
-sf project retrieve start --metadata ApexPage --target-org PlusGradeFullSB
+sf project retrieve start --metadata ApexPage --target-org <target-env-alias>
 
 # List VF pages via Tooling API
-sf data query --query "SELECT Id, Name, ControllerType FROM ApexPage ORDER BY Name" --target-org PlusGradeFullSB
+sf data query --query "SELECT Id, Name, ControllerType FROM ApexPage ORDER BY Name" --target-org <target-env-alias>
 ```
 
 ---
@@ -350,7 +350,7 @@ sf data query --query "SELECT Id, Name, ControllerType FROM ApexPage ORDER BY Na
 
 ## 12. Empirical Findings & Implementation Notes
 
-When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
+When Salesforce's documented approach doesn't work in the target environment, the workaround goes here. Date-stamp every entry.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|
@@ -371,5 +371,5 @@ When Salesforce's documented approach doesn't work in this org, the workaround g
 
 ---
 
-*Visualforce Guidelines | Plusgrade PlusGradeFullSB | Last verified 2026-05-16*
+*Visualforce Guidelines | Reusable Salesforce Agent Guidelines | Last verified 2026-05-16*
 
