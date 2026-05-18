@@ -1,480 +1,395 @@
 # Email Template Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Guidelines for Salesforce email template creation and management. Attach when creating, reviewing, or deploying email templates.
+Authoritative reference for `EmailTemplate` metadata in this project. Covers the metadata XML shape, the five template types, merge-field anatomy, folder placement, attachments, branding, Apex-side rendering (`Messaging.renderStoredEmailTemplate`), and the agent-side `GetEmailTemplateAction` pattern used by `Email_Template_Drafting` in the `Email_Analysis_Agent` bundle.
+
+**Verified against:** [EmailTemplate Metadata API reference](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_emailtemplate.htm) · [Messaging.SingleEmailMessage Apex reference](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_class_Messaging_SingleEmailMessage.htm) · [Outbound Email from Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_email_outbound_messaging.htm). Last verified 2026-05-16.
 
 ---
 
-## Table of Contents
+## 1. File Layout
 
-1. [Required Agent Output Contract](#1-required-agent-output-contract)
-2. [Template Types](#2-template-types)
-3. [Lightning Email Templates](#3-lightning-email-templates)
-4. [Classic Email Templates](#4-classic-email-templates)
-5. [Merge Fields](#5-merge-fields)
-6. [Folder Access](#6-folder-access)
-7. [Org-Wide Email Addresses](#7-org-wide-email-addresses)
-8. [Experience Cloud / Customer Emails](#8-experience-cloud--customer-emails)
-9. [Localization](#9-localization)
-10. [Testing](#10-testing)
-11. [Deployment](#11-deployment)
-12. [Common AI Mistakes to Avoid](#12-common-ai-mistakes-to-avoid)
-13. [Definition of Done](#13-definition-of-done)
-14. [Validation Commands](#14-validation-commands)
-15. [Official References](#15-official-references)
+A deployable email template lives in two files under a folder:
+
+```
+force-app/main/default/email/
+   <FolderDevName>/
+      <FolderDevName>-meta.xml                    # EmailFolder metadata (deploy first)
+      <TemplateDevName>.email                     # body content (HTML or text)
+      <TemplateDevName>.email-meta.xml            # EmailTemplate metadata wrapper
+```
+
+**Critical:** the folder must exist in the org before the template can deploy into it. The `.email` filename, `name` attribute in the meta XML, and the `members` entry in `package.xml` (`<FolderDevName>/<TemplateDevName>`) must all align — case-sensitive.
+
+Visualforce email templates additionally need the linked controller class deployed; Lightning templates store their body in `EmailTemplate.HtmlValue` and don't require a `.email` companion file — they ship as a `LightningEmailTemplate` (Content Builder) record retrieved as part of `EmailTemplate`.
 
 ---
 
-## 1. Required Agent Output Contract
+## 2. The Five `TemplateType` Values
 
-When generating or modifying an email template, the AI agent MUST produce:
+`type` is the discriminator on the `EmailTemplate` metadata element. Pick one per template.
 
-### 1.1 Template Type and Context
+| `type` | Where created | Body source | Use when |
+|---|---|---|---|
+| `text` | Classic Setup | `textOnly` field | Plain-text-only notifications, SMS-to-email bridges |
+| `html` | Classic Setup | `.email` HTML body | Legacy automations that pre-date Lightning, classic email alerts |
+| `custom` | Classic Setup with custom HTML, no letterhead | `.email` HTML body | Classic HTML without letterhead constraints |
+| `visualforce` | Developer Console / VS Code | `.email` with `<messaging:emailTemplate>` markup | Iteration over child records, conditional rendering, dynamic PDF attachments |
+| `lightning` | Lightning Email Templates app / Email tab | Stored in `HtmlValue`/`Body` on the runtime record | All new development |
 
-```
-Template Type: Lightning HTML / Classic Text / Classic HTML / Visualforce
-Object Context: Case (defines which merge fields are available)
-Template Name (API): Case_Support_Acknowledgement
-Label: Case Support Acknowledgement
-Folder: Support_Team_Templates
-```
-
-### 1.2 Object Context and Merge Fields Used
-
-List every merge field and confirm the field exists on the specified object:
-
-```
-Merge Fields:
-- {!Case.CaseNumber}         -> Case number for customer reference
-- {!Case.Subject}            -> Summary of the reported issue
-- {!Case.Status}             -> Current case status
-- {!Contact.FirstName}       -> Recipient's first name (via Case.Contact)
-- {!Organization.Name}       -> Org name for signature
-```
-
-### 1.3 Folder
-
-```
-Folder: Support_Team_Templates (shared folder — visible to all support profiles)
-Folder Access: Read for all Support users; Write for Support Lead and above
-```
-
-### 1.4 Test Plan
-
-```
-- Send test from Case record with real data
-- Verify {!Case.CaseNumber} resolves correctly
-- Verify {!Contact.FirstName} resolves when Case has a linked Contact
-- Test fallback when Contact is null
-- Verify rendering in Gmail, Outlook, Apple Mail
-- Verify From address is org-wide email, not personal user email
-```
+**Default for new work:** `lightning`. Only fall back to `visualforce` when you need iteration, conditional content blocks the Lightning Builder can't express, or programmatic PDF generation. Only fall back to `text`/`html`/`custom` when migrating or when a legacy automation explicitly requires it.
 
 ---
 
-## 2. Template Types
-
-### 2.1 Lightning HTML Email Templates (Recommended)
-
-- Created in Lightning Experience via the Email Templates tab or Setup.
-- Supports enhanced letterhead, drag-and-drop builder, and HTML editing.
-- Supports merge fields from related objects.
-- Can be used in: Email alerts (Flow), Send Email action, Cadences (Sales Engagement).
-- **Use for all new email template development.**
-
-### 2.2 Classic Text Templates
-
-- Plain text — no HTML formatting.
-- Use only when the email channel does not support HTML (e.g., some SMS-to-email integrations).
-- Merge field syntax same as HTML templates.
-
-### 2.3 Classic HTML Templates
-
-- HTML templates created in Classic Salesforce Setup.
-- Supports basic HTML formatting but not the full Lightning HTML template builder.
-- Use only when a legacy automation requires it or Lightning HTML is not supported by the workflow.
-- Being gradually replaced by Lightning HTML templates.
-
-### 2.4 Visualforce Email Templates
-
-- Full Apex-controller power; can include dynamic content, iteration, conditional blocks.
-- Required for: complex conditional content, iterating over child records, advanced formatting logic.
-- Higher maintenance cost — requires developer to maintain.
-- Use only when Lightning HTML templates cannot meet the requirements.
-- See `visualforce_guidelines.md` for controller design rules.
-
-### Template Type Decision Table
-
-| Requirement | Recommended Type |
-|---|---|
-| Standard transactional email | Lightning HTML |
-| Email with company letterhead/branding | Lightning HTML |
-| Simple plain-text notification | Classic Text |
-| Legacy automation that only accepts Classic | Classic HTML |
-| Iterate over related records (e.g., list products on order) | Visualforce |
-| Complex conditional formatting | Visualforce |
-| PDF attachment generated dynamically | Visualforce |
-
----
-
-## 3. Lightning Email Templates
-
-### Structure
-
-A Lightning HTML Email Template consists of:
-- **Subject**: Can include merge fields.
-- **HTML Body**: Full HTML content with merge fields and optional letterhead.
-- **Text Body**: Plain-text fallback for email clients that do not render HTML.
-- **Letterhead** (optional): Pre-defined header/footer branding.
-- **Related Object**: Defines the namespace for merge fields.
-
-### Example Template Structure
-
-**Subject**: Your Case `{!Case.CaseNumber}` Has Been Received — `{!Case.Subject}`
-
-**HTML Body**:
-```html
-<html>
-<body>
-<p>Dear {!Case.Contact.FirstName},</p>
-
-<p>Thank you for contacting our support team. We have received your case and will be in touch shortly.</p>
-
-<table>
-  <tr><td><strong>Case Number:</strong></td><td>{!Case.CaseNumber}</td></tr>
-  <tr><td><strong>Subject:</strong></td><td>{!Case.Subject}</td></tr>
-  <tr><td><strong>Priority:</strong></td><td>{!Case.Priority}</td></tr>
-  <tr><td><strong>Status:</strong></td><td>{!Case.Status}</td></tr>
-</table>
-
-<p>If you have additional information to add, please reply to this email.</p>
-
-<p>Best regards,<br/>
-{!Organization.Name} Support Team</p>
-</body>
-</html>
-```
-
-**Text Body**:
-```
-Dear {!Case.Contact.FirstName},
-
-Thank you for contacting support. Your case has been received.
-
-Case Number: {!Case.CaseNumber}
-Subject: {!Case.Subject}
-Priority: {!Case.Priority}
-Status: {!Case.Status}
-
-Best regards,
-{!Organization.Name} Support Team
-```
-
-### Rules
-
-- Always provide both HTML body and plain-text body.
-- HTML must be well-formed — unclosed tags can break rendering.
-- Inline CSS is more reliable than external stylesheets in email clients.
-- Test in multiple email clients (Gmail, Outlook, Apple Mail) — CSS support varies significantly.
-
----
-
-## 4. Classic Email Templates
-
-### When Still Appropriate
-
-- Legacy automations (Workflow Rules, classic Process Builder) that were built before Lightning templates were available.
-- When a third-party integration explicitly requires the Classic template format.
-- When migrating an existing Classic template and there is no time/budget to rebuild in Lightning HTML.
-
-### Migration Path
-
-If you are creating a new Classic template because an existing process uses it:
-- Document the template as "Classic — legacy. Planned migration to Lightning HTML by [target date]."
-- Flag it in the project backlog for migration when the automation is next touched.
-
-### Classic Template Example
-
-```
-Subject: Case {!Case.CaseNumber} - Update
-
-Dear {!Case.Contact.FirstName},
-
-Your case {!Case.CaseNumber} regarding "{!Case.Subject}" has been updated.
-Current status: {!Case.Status}
-
-Please contact us if you have questions.
-
-{!Organization.Name} Support Team
-```
-
----
-
-## 5. Merge Fields
-
-### Syntax
-
-```
-{!ObjectApiName.FieldApiName}
-```
-
-### Available Namespace by Template Type
-
-The merge field namespace depends on the **Related Object** set on the template:
-- A Case template can access `{!Case.FieldName}` and related objects via relationships.
-- A Contact template can access `{!Contact.FieldName}`.
-
-### Common Merge Field Examples
-
-```
-{!Case.CaseNumber}              -> Unique case number
-{!Case.Subject}                 -> Case subject
-{!Case.Status}                  -> Current status
-{!Case.Priority}                -> Priority level
-{!Case.Description}             -> Case description (be careful with length)
-{!Case.Contact.FirstName}       -> Contact first name via lookup
-{!Case.Contact.LastName}        -> Contact last name
-{!Case.Contact.Email}           -> Contact email
-{!Case.Account.Name}            -> Account name via lookup
-{!Case.Owner.Name}              -> Case owner name
-{!Case.Owner.Email}             -> Case owner email
-{!Organization.Name}            -> Org name
-{!Organization.Phone}           -> Org phone
-{!Receiving_User.FirstName}     -> Recipient's first name (contextual)
-```
-
-### Conditional Content with IF Function
-
-For conditional content in Classic and some Visualforce templates:
-
-```
-{!IF(Case.Status = "Closed", "Your case has been resolved.", "We are working on your case.")}
-```
-
-In Lightning HTML templates, conditional content is handled via dynamic content sections in the builder.
-
-### Rules
-
-- Always test merge fields with real records — fields that look correct in the template may fail to resolve if the relationship is not populated.
-- If a related field can be null (e.g., `Case.Contact` may not always be linked), handle the null case in the template text.
-- Never reference fields that contain sensitive/confidential internal data (e.g., internal notes, cost fields) in customer-facing templates.
-- Merge fields in the Subject line are processed the same as in the body — they can also fail to resolve.
-
----
-
-## 6. Folder Access
-
-### Overview
-
-Email templates are stored in folders. Folder access controls who can view and use the templates. This is a critical aspect of template governance — a support template should not be accessible to the entire org, and vice versa.
-
-### Folder Types
-
-| Folder Type | Description |
-|---|---|
-| Public (unfiled) | Accessible to all users — avoid for role-specific templates |
-| Shared Public Folder | Created and shared with specific groups/roles |
-| Private Folder | Accessible only to the owner |
-
-### Rules
-
-- Never store email templates in the "Unfiled Public Classic Email Templates" folder unless they are genuinely org-wide.
-- Create role- or team-specific folders for role-specific templates.
-- Set folder sharing: Read access for users who send the template; Write/Manage access for the template owners.
-- Document folder structure in the email template naming convention.
-
-### Folder Naming Convention
-
-```
-<Team>_<Domain>_Templates
-```
-
-Examples:
-- `Support_Team_Templates`
-- `Sales_Outbound_Templates`
-- `Finance_Billing_Templates`
-
-### Deployment Consideration
-
-EmailTemplate folders are a separate metadata type. The folder must be deployed before the templates inside it. See Section 11 for deployment details.
-
----
-
-## 7. Org-Wide Email Addresses
-
-### Rules
-
-- All automated emails must use an **Org-Wide Email Address** as the From address, not a personal user email.
-- Personal email addresses change when staff leave; org-wide addresses are stable.
-- Org-Wide Email Addresses are configured in Setup > Email > Organization-Wide Addresses.
-- When setting up an email alert or Flow that sends email via a template, explicitly configure the From address to use the appropriate org-wide address.
-
-### Common Org-Wide Addresses to Define
-
-| Address | Purpose |
-|---|---|
-| `support@company.com` | Customer support email notifications |
-| `noreply@company.com` | System notifications that do not expect replies |
-| `billing@company.com` | Billing-related automated emails |
-| `sales@company.com` | Sales outreach templates |
-
-### Setting From Address in Flow Send Email Action
-
-In a Flow Send Email action:
-- **From Address Type**: Org-Wide Email Address
-- **From Address**: Select `support@company.com` (or appropriate org-wide address)
-
-### Never Use
-
-- Personal user email addresses (`{!$User.Email}`) as the From address for automated emails.
-- Default user email for system-triggered emails.
-
----
-
-## 8. Experience Cloud / Customer Emails
-
-### Compatibility
-
-Not all email templates are compatible with all Salesforce channels. Verify:
-- Lightning HTML templates work with Experience Cloud email actions — check in your target org.
-- Some Experience Cloud email actions may require specific template types.
-- Community-specific branding (logo, colors) may need to be applied via the template letterhead or inline CSS.
-
-### Community-Specific Considerations
-
-- If your Experience Cloud site has a distinct brand from the main Salesforce org, create separate templates with community branding.
-- Do not reuse internal support email templates for customer-facing Experience Cloud emails — the tone, branding, and content should differ.
-- Verify reply-to address for Experience Cloud emails — replies from customers should route to the correct queue or inbox.
-
-### Testing in Experience Cloud Context
-
-- Send a test email from within the Experience Cloud context (not just from the internal org) to verify rendering.
-- Confirm merge fields resolve correctly in the Experience Cloud user context.
-
----
-
-## 9. Localization
-
-### Multi-Language Email Templates
-
-When your org serves customers in multiple languages:
-
-#### Option 1: Separate Template per Language
-
-- Create one template per language: `Case_Support_Acknowledgement_EN`, `Case_Support_Acknowledgement_FR`, etc.
-- Use Flow logic to select the correct template based on the Case Contact's preferred language or Account locale.
-- Pros: Full control over content per language. Cons: Maintenance overhead — updates require changing every language template.
-
-#### Option 2: Translation Workbench (Verify Support)
-
-- Salesforce Translation Workbench may support translating template content.
-- **Verify in your target org** — Translation Workbench support for email templates varies by template type and Salesforce release.
-
-#### Option 3: Dynamic Merge Fields for Language
-
-- Store translated strings in Custom Metadata (one record per language key).
-- Use a Flow or Apex to retrieve the translated string and pass it as a template variable.
-- This works when only key phrases need translation, not the full template.
-
-### Rules
-
-- Always confirm the customer's preferred language before sending a localized email.
-- Document which languages are supported and which template is used for each.
-- Test localized templates with native speaker review — do not rely solely on machine translation.
-
----
-
-## 10. Testing
-
-### Test Checklist
-
-- [ ] Send a test email from a real Case record (not just the template preview).
-- [ ] Verify all merge fields resolve to correct values.
-- [ ] Verify merge fields that can be null are handled gracefully (no `{!Case.Contact.FirstName}` appearing literally in the email).
-- [ ] Verify the From address is the correct org-wide email address.
-- [ ] Verify the Reply-To address is correct.
-- [ ] Test rendering in at least 3 email clients: Gmail, Outlook (desktop), Apple Mail.
-- [ ] Check the plain-text fallback for clients that do not render HTML.
-- [ ] Verify subject line merge fields resolve correctly.
-- [ ] Test with a contact record that has special characters in name fields.
-- [ ] If multi-language: test each language template with a record set to that locale.
-
-### Email Client Rendering Tips
-
-Email clients implement CSS support differently:
-- Outlook (desktop) uses Word to render HTML — many CSS properties not supported.
-- Use `<table>` layouts for consistent multi-column email layouts.
-- Avoid `<div>` for layout in emails — use `<table>` instead.
-- Use inline CSS (style attributes) not external stylesheets.
-- Images: use absolute URLs; do not embed images as base64 (email clients often block these).
-- Set explicit width on all table elements.
-
----
-
-## 11. Deployment
-
-### Metadata Type
-
-- Type: `EmailTemplate`
-- File extension: `.email-meta.xml` (for metadata) and `.email` (for HTML content)
-- Location: `force-app/main/default/email/<FolderName>/`
-
-### Folder as Metadata
-
-Email template folders are deployed as `EmailFolder` metadata type. The folder must exist in the org before the template can be deployed into it.
-
-### package.xml Example
-
-```xml
-<!-- Deploy folder first -->
-<types>
-    <members>Support_Team_Templates</members>
-    <name>EmailFolder</name>
-</types>
-
-<!-- Then deploy templates -->
-<types>
-    <members>Support_Team_Templates/Case_Support_Acknowledgement</members>
-    <members>Support_Team_Templates/Case_Resolution_Notice</members>
-    <name>EmailTemplate</name>
-</types>
-```
-
-### File Structure
-
-```
-force-app/
-  main/
-    default/
-      email/
-        Support_Team_Templates/
-          Support_Team_Templates-meta.xml        (folder metadata)
-          Case_Support_Acknowledgement.email      (HTML body)
-          Case_Support_Acknowledgement.email-meta.xml  (template metadata)
-```
-
-### Template Metadata File Example
+## 3. EmailTemplate Metadata Structure
+
+Authoritative field list (Metadata API). Required fields marked **req**.
+
+| Field | Type | Notes |
+|---|---|---|
+| `apiVersion` | double | API version of the template. Optional. |
+| `available` | boolean **req** | `true` to allow use in lists. Default `true`. |
+| `attachments` | Attachment[] | Inline attachments — `name`, `content` (base64), `contentType`. |
+| `description` | string | Free-text. Every template MUST have one (governance). |
+| `encodingKey` | enum **req** | `UTF-8` (preferred), `ISO-8859-1`, `Shift_JIS`, `ISO-2022-JP`, `EUC-JP`, `ks_c_5601-1987`, `Big5`, `GB2312`. |
+| `letterhead` | string | API name of the Classic letterhead. Only for `type: html`. |
+| `name` | string **req** | Display label. |
+| `packageVersions` | PackageVersion[] | For managed-package dependencies. |
+| `relatedEntityType` | string | The SObject the merge-field namespace is rooted at (e.g. `Case`, `Contact`, `Account`). Sets the `{!Case.Field}` scope. |
+| `style` | enum | `none`, `freeForm`, `formalLetter`, `promotionRight`, `promotionLeft`, `newsletter`, `products`. |
+| `subject` | string | Subject line. Supports merge fields. |
+| `templateStyle` | enum | Lightning-only styling profile. |
+| `textOnly` | string | Plain-text fallback body. Required for `type: text`; recommended for every type. |
+| `type` | enum **req** | `text` / `html` / `custom` / `visualforce` / `lightning`. |
+| `uiType` | enum | `Aloha` (Classic UI), `SFX` (Lightning UI), `SFX_SAMPLE`. Set to `SFX` for all new templates. |
+
+### Minimal `lightning` template meta XML
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <EmailTemplate xmlns="http://soap.sforce.com/2006/04/metadata">
     <available>true</available>
-    <description>Sent to customers when a new Case is created. Provides case number and subject confirmation.</description>
+    <description>Sent to customers when a new Case is created.</description>
     <encodingKey>UTF-8</encodingKey>
     <name>Case Support Acknowledgement</name>
     <relatedEntityType>Case</relatedEntityType>
     <style>none</style>
-    <subject>Your Case {!Case.CaseNumber} Has Been Received</subject>
-    <textOnly>Plain text fallback content here.</textOnly>
-    <type>html</type>
+    <subject>Your Case {!Case.CaseNumber} has been received</subject>
+    <textOnly>Plain text fallback for non-HTML clients.</textOnly>
+    <type>lightning</type>
     <uiType>SFX</uiType>
 </EmailTemplate>
 ```
 
+### Visualforce template
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<EmailTemplate xmlns="http://soap.sforce.com/2006/04/metadata">
+    <available>true</available>
+    <description>Order confirmation with line-item table.</description>
+    <encodingKey>UTF-8</encodingKey>
+    <name>Order Confirmation</name>
+    <relatedEntityType>Order</relatedEntityType>
+    <style>none</style>
+    <subject>Order {!relatedTo.OrderNumber} confirmed</subject>
+    <type>visualforce</type>
+    <uiType>Aloha</uiType>
+</EmailTemplate>
+```
+
+The `.email` body uses `<messaging:emailTemplate recipientType="Contact" relatedToType="Order">` and may invoke an Apex controller via `<apex:component controller="...">`.
+
 ---
 
-## 12. Common AI Mistakes to Avoid
+## 4. Merge Fields
+
+### Syntax
+
+```
+{!ObjectApiName.FieldApiName}
+{!ObjectApiName.LookupApiName.FieldApiName}
+```
+
+The leading `!` is mandatory — `{Case.CaseNumber}` does not resolve.
+
+### Namespace by template type
+
+The accessible namespace is governed by `relatedEntityType` (Lightning, Classic) or the `recipientType` / `relatedToType` attributes (Visualforce):
+
+- Lightning / Classic: `{!<relatedEntityType>.Field}` plus traversals via lookups (e.g. `{!Case.Contact.FirstName}`).
+- Visualforce: `{!recipient.Field}` for the WhoId record, `{!relatedTo.Field}` for the WhatId record.
+
+### Standard global namespaces
+
+```
+{!Organization.Name}              # the running Salesforce org
+{!Organization.Phone}
+{!Organization.Street}
+{!User.FirstName}                 # the running user — avoid for automated sends
+{!Receiving_User.FirstName}       # the recipient if a Salesforce user
+```
+
+### Conditional content
+
+Classic and Visualforce templates support the IF function:
+
+```
+{!IF(Case.Status = "Closed", "Your case is resolved.", "We are working on your case.")}
+```
+
+Lightning templates handle conditional content through Dynamic Content blocks in the Builder UI — not via `{!IF(...)}` literals.
+
+### Null-traversal trap
+
+`{!Case.Contact.FirstName}` resolves only when `Case.ContactId` is populated. If the lookup is null, Lightning renders an empty string; Classic may render the literal `{!Case.Contact.FirstName}`. Always guard with a fallback (e.g. `"Hi {!IF(ISBLANK(Case.Contact.FirstName), "there", Case.Contact.FirstName)}"`) for customer-facing templates.
+
+---
+
+## 5. Target Object vs Related Object — WhoId vs WhatId
+
+The single most-confused concept in template sending. Salesforce splits the runtime context into two parameters:
+
+| Concept | Apex setter | Holds | Merge-field root |
+|---|---|---|---|
+| **Target Object** (a.k.a. recipient, WhoId) | `setTargetObjectId(Id)` | Contact, Lead, or User Id — the human who receives the email | `{!Contact.*}` or `{!Lead.*}` or `{!recipient.*}` |
+| **Related Object** (WhatId) | `setWhatId(Id)` | Any SObject — the business record the email is *about* | `{!<relatedEntityType>.*}` or `{!relatedTo.*}` |
+
+**Rule:** `setTargetObjectId` MUST be a Contact, Lead, or User. Setting it to a Case Id, Account Id, or Custom Object Id raises `INVALID_ID_FIELD`. The related business record goes in `setWhatId`.
+
+For a Case template that addresses `Case.Contact` about the Case itself:
+- `setTargetObjectId(case.ContactId)` — recipient
+- `setWhatId(case.Id)` — the related Case for `{!Case.*}` merge fields
+
+If you need to email an Account contact about an Order, set `targetObjectId = contact.Id`, `whatId = order.Id`, and put `{!Order.*}` merge fields in the template.
+
+---
+
+## 6. Sending Templates from Apex
+
+### Pattern A — Send via `Messaging.sendEmail` (one-shot send)
+
+```apex
+Messaging.SingleEmailMessage msg = new Messaging.SingleEmailMessage();
+msg.setTemplateId(templateId);                     // EmailTemplate.Id
+msg.setTargetObjectId(contactId);                  // Contact / Lead / User
+msg.setWhatId(caseId);                             // related business record
+msg.setOrgWideEmailAddressId(orgWideAddressId);    // stable From
+msg.setSaveAsActivity(true);                       // logs as Activity on Case
+msg.setTreatTargetObjectAsRecipient(true);
+
+Messaging.SendEmailResult[] results =
+    Messaging.sendEmail(new Messaging.SingleEmailMessage[]{ msg }, false);
+
+if (!results[0].isSuccess()) {
+    AppLog.error('Email send failed', results[0].getErrors());
+}
+```
+
+Note: `setTemplateId` with a `lightning` template requires `setTreatTargetObjectAsRecipient(true)` for the merge to resolve.
+
+### Pattern B — Render only, return the bound text (used by agents and previews)
+
+```apex
+Messaging.SingleEmailMessage rendered =
+    Messaging.renderStoredEmailTemplate(templateId, whoId, whatId);
+
+String subject = rendered.getSubject();            // merge fields resolved
+String htmlBody = rendered.getHtmlBody();
+String textBody = rendered.getPlainTextBody();
+```
+
+`renderStoredEmailTemplate` does NOT send. It resolves the merge fields and returns the rendered message for inspection, preview, or downstream handoff. This is what `GetEmailTemplateAction` uses (Section 8).
+
+### Common send errors
+
+| Error | Cause | Fix |
+|---|---|---|
+| `INVALID_ID_FIELD: target object id` | `setTargetObjectId` is not a Contact/Lead/User | Pass a `WhoId`-eligible record |
+| `TEMPLATE_NOT_FOUND` | `templateId` is null, soft-deleted, or in a folder the running user can't access | Verify ID + folder share + active state |
+| `TEMPLATE_NOT_ACTIVE` | Template is not in an active state | Activate the template in the source org |
+| `NO_RECIPIENTS` | `setToAddresses` empty AND no `setTargetObjectId` | Provide at least one |
+| `INVALID_EMAIL_ADDRESS` | Target Contact has null/invalid `Email` | Validate before send |
+| `LIMIT_EXCEEDED` | Daily org email limit hit (5,000 external) | Throttle or batch |
+| Empty body on send | `setTreatTargetObjectAsRecipient(false)` for a Lightning template | Set to `true` |
+
+---
+
+## 7. Folders, Sharing, Branding, Attachments
+
+### Folders
+
+Email templates live inside an `EmailFolder` (Classic, VF, custom, html, text templates) or in `Public/Private/Shared Folders` for Lightning templates. Folder access controls visibility.
+
+```xml
+<!-- Folder meta XML -->
+<?xml version="1.0" encoding="UTF-8"?>
+<EmailFolder xmlns="http://soap.sforce.com/2006/04/metadata">
+    <accessType>Shared</accessType>
+    <name>Support Team Templates</name>
+    <publicFolderAccess>ReadWrite</publicFolderAccess>
+</EmailFolder>
+```
+
+Naming convention: `<Team>_<Domain>_Templates` (e.g. `Support_Team_Templates`, `Sales_Outbound_Templates`).
+
+### Branding sets
+
+Lightning Experience supports **Branding Sets** (logo, colors, font) applied per Org or per Experience Cloud site. Branding Sets render only when the email is sent from inside the Experience Cloud / Salesforce context that owns them — external sends fall back to the raw HTML. For Experience Cloud customer emails, verify the branding set is applied at the site level.
+
+Classic templates use a `Letterhead` (`letterhead` field on the EmailTemplate). Letterheads are Classic-only.
+
+### Attachments
+
+Two mechanisms:
+
+1. **Static attachments** declared in the EmailTemplate's `attachments` field — base64-encoded blobs, deployed with the template. Suitable for unchanging documents (terms, brochures).
+2. **Dynamic attachments** added at send time via `Messaging.SingleEmailMessage.setFileAttachments(...)` or by querying `ContentVersion` and converting to `Messaging.EmailFileAttachment`. Required for record-specific PDFs.
+
+Visualforce templates can also generate a PDF attachment in-line using `<messaging:attachment renderAs="pdf">`.
+
+### Encoding
+
+Always `UTF-8` for new work — supports the full Unicode range our customers use across 30+ markets. The legacy `ISO-8859-1` and `Shift_JIS` values exist for back-compat only.
+
+---
+
+## 8. Agent-Side Usage — `GetEmailTemplateAction` Pattern
+
+The `Email_Analysis_Agent` bundle (`Email_Template_Drafting` subagent) uses an Apex invocable that wraps `Messaging.renderStoredEmailTemplate` to return a fully-resolved draft to the LLM for refinement. This is the canonical pattern for any agent that drafts replies from templates.
+
+### Apex invocable contract
+
+```apex
+public with sharing class GetEmailTemplateAction {
+
+    public class Request {
+        @InvocableVariable(required=true)
+        public Id caseId;                  // WhatId
+
+        @InvocableVariable(required=true)
+        public String templateDeveloperName;   // resolves to EmailTemplate.Id
+    }
+
+    public class Response {
+        @InvocableVariable public String subject;
+        @InvocableVariable public String htmlBody;
+        @InvocableVariable public String plainBody;
+        @InvocableVariable public String errorMessage;
+    }
+
+    @InvocableMethod(label='Get Email Template'
+                     description='Render a stored EmailTemplate for the case Contact + Case context')
+    public static List<Response> run(List<Request> requests) {
+        List<Response> out = new List<Response>();
+        for (Request req : requests) {
+            Response r = new Response();
+            try {
+                Case c = [SELECT Id, ContactId FROM Case WHERE Id = :req.caseId LIMIT 1];
+                if (c.ContactId == null) {
+                    r.errorMessage = 'Case has no Contact; cannot render Target Object.';
+                    out.add(r); continue;
+                }
+                EmailTemplate t = [
+                    SELECT Id FROM EmailTemplate
+                    WHERE DeveloperName = :req.templateDeveloperName
+                    AND IsActive = true LIMIT 1
+                ];
+                Messaging.SingleEmailMessage rendered =
+                    Messaging.renderStoredEmailTemplate(t.Id, c.ContactId, c.Id);
+                r.subject   = rendered.getSubject();
+                r.htmlBody  = rendered.getHtmlBody();
+                r.plainBody = rendered.getPlainTextBody();
+            } catch (QueryException qe) {
+                r.errorMessage = 'Template not found or inaccessible: ' + qe.getMessage();
+            } catch (Exception ex) {
+                r.errorMessage = 'Render failed: ' + ex.getMessage();
+            }
+            out.add(r);
+        }
+        return out;
+    }
+}
+```
+
+### Agent Script wiring
+
+```
+actions:
+   get_template:
+      description: "Render a stored EmailTemplate for the current Case + Contact."
+      label: "Get Email Template"
+      inputs:
+         caseId: id
+            description: "Case Id (WhatId)"
+            is_required: True
+         templateDeveloperName: string
+            description: "EmailTemplate.DeveloperName"
+            is_required: True
+      outputs:
+         subject: string
+         htmlBody: string
+         plainBody: string
+         errorMessage: string
+            filter_from_agent: True
+      target: "apex://GetEmailTemplateAction"
+```
+
+### Error patterns observed in this org
+
+- **Template-not-found:** the LLM asks for a friendly name; the action queries `DeveloperName` not `Name`. Always pass the API name. If the user gave a label, resolve label → DeveloperName before invoking.
+- **Recipient-without-Contact:** `Messaging.renderStoredEmailTemplate(templateId, null, caseId)` returns merge fields like `{!Contact.FirstName}` literally because the Who context is missing. Always check `Case.ContactId` first and short-circuit with a clear error to the agent (then `filter_from_agent: True` so the LLM doesn't echo it verbatim).
+- **Lightning template renders blank:** when called with `treatTargetObjectAsRecipient = false` (the implicit default in some Apex paths). `renderStoredEmailTemplate` handles this internally, but `setTemplateId` + `sendEmail` does not — set explicitly.
+
+---
+
+## 9. Validation Commands
+
+```bash
+# Retrieve a template by folder/name
+sf project retrieve start \
+  --metadata "EmailTemplate:Support_Team_Templates/Case_Support_Acknowledgement" \
+  --target-org PlusGradeFullSB
+
+# Deploy folder first, then the template
+sf project deploy start \
+  --metadata "EmailFolder:Support_Team_Templates" \
+  --target-org PlusGradeFullSB
+
+sf project deploy start \
+  --metadata "EmailTemplate:Support_Team_Templates/Case_Support_Acknowledgement" \
+  --target-org PlusGradeFullSB
+
+# Inspect templates via SOQL
+sf data query \
+  --query "SELECT Id, Name, DeveloperName, FolderName, TemplateType, IsActive, UiType FROM EmailTemplate WHERE TemplateType IN ('lightning','html','custom','visualforce','text') ORDER BY FolderName, Name" \
+  --target-org PlusGradeFullSB
+
+# Confirm a folder exists
+sf data query \
+  --query "SELECT Id, Name, DeveloperName, Type FROM Folder WHERE Type = 'Email' ORDER BY Name" \
+  --target-org PlusGradeFullSB
+```
+
+---
+
+## 10. Definition of Done
+
+- [ ] `type` chosen per Section 2 decision table; `uiType` = `SFX` for new templates
+- [ ] `relatedEntityType` set to the correct SObject; all `{!Field}` merge fields resolve against it
+- [ ] `description` populated (governance-required)
+- [ ] `encodingKey` is `UTF-8`
+- [ ] Both HTML body and `textOnly` plain-text body provided
+- [ ] Folder deployed before template; folder sharing reviewed
+- [ ] Test send from a real record — every merge field resolves to a non-null value
+- [ ] Null-lookup paths (e.g. `Case.Contact.*`) guarded with IF/fallback for customer-facing copy
+- [ ] Org-Wide Email Address (not a personal user email) used as `From`
+- [ ] No internal/confidential fields exposed in customer-facing templates
+- [ ] Rendered and tested in Gmail, Outlook desktop, Apple Mail
+- [ ] If invoked from Apex: `setTreatTargetObjectAsRecipient(true)` for Lightning templates; recipient is a Contact/Lead/User Id
+
+---
+
+## 11. Common AI Mistakes to Avoid
 
 | Mistake | Why It's Wrong | Correct Approach |
 |---|---|---|
@@ -489,66 +404,26 @@ force-app/
 
 ---
 
-## 13. Definition of Done
+## 12. Empirical Findings & Implementation Notes
 
-An Email Template is complete and deployable when ALL of the following are true:
+When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
 
-- [ ] Template type is appropriate (Lightning HTML for new development)
-- [ ] Template has a label, API name, and description
-- [ ] All merge fields tested with real records — all fields resolve correctly
-- [ ] Null/empty field cases handled gracefully in template content
-- [ ] From address configured as Org-Wide Email Address (not personal email)
-- [ ] Reply-To address confirmed and correct
-- [ ] HTML body and plain-text fallback both provided
-- [ ] Rendered and tested in at least 3 email clients
-- [ ] Template stored in correct folder with appropriate folder sharing
-- [ ] Folder deployed before template in deployment plan
-- [ ] No sensitive/internal data in customer-facing templates
-- [ ] Localization plan documented (if multi-language org)
+| # | Date | Documented approach | What actually works | Why / Context |
+|---|---|---|---|---|
 
 ---
 
-## 14. Validation Commands
+## 13. Official References
 
-```bash
-# Retrieve email templates from org
-sf project retrieve start \
-  --metadata "EmailTemplate" \
-  --target-org <alias>
-
-# Retrieve a specific template
-sf project retrieve start \
-  --metadata "EmailTemplate:Support_Team_Templates/Case_Support_Acknowledgement" \
-  --target-org <alias>
-
-# Deploy email folder first, then templates
-sf project deploy start \
-  --metadata "EmailFolder:Support_Team_Templates" \
-  --target-org <alias>
-
-sf project deploy start \
-  --metadata "EmailTemplate:Support_Team_Templates/Case_Support_Acknowledgement" \
-  --target-org <alias>
-
-# List email templates via SOQL
-sf data query \
-  --query "SELECT Id, Name, DeveloperName, FolderId, TemplateType, IsActive FROM EmailTemplate ORDER BY Name" \
-  --target-org <alias>
-
-# Verify folder exists
-sf data query \
-  --query "SELECT Id, Name, DeveloperName, Type FROM Folder WHERE Type = 'Email' ORDER BY Name" \
-  --target-org <alias>
-```
+- [EmailTemplate Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_emailtemplate.htm)
+- [Messaging.SingleEmailMessage Apex reference](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_class_Messaging_SingleEmailMessage.htm)
+- [Outbound Email from Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_email_outbound_messaging.htm)
+- [Email Templates in Lightning Experience](https://help.salesforce.com/s/articleView?id=sf.email_create_a_template.htm)
+- [Classic Email Templates](https://help.salesforce.com/s/articleView?id=sf.classic_email_templates.htm)
+- [Org-Wide Email Addresses](https://help.salesforce.com/s/articleView?id=sf.email_orgwide_address.htm)
+- [Merge Fields for Email Templates](https://help.salesforce.com/s/articleView?id=sf.merge_field_types.htm)
+- [Trailhead — Email Templates in Salesforce](https://trailhead.salesforce.com/content/learn/modules/lex_implementation_email)
 
 ---
 
-## 15. Official References
-
-- Salesforce Help: [Email Templates in Lightning Experience](https://help.salesforce.com/s/articleView?id=sf.email_create_a_template.htm)
-- Salesforce Help: [Classic Email Templates](https://help.salesforce.com/s/articleView?id=sf.classic_email_templates.htm)
-- Salesforce Help: [Org-Wide Email Addresses](https://help.salesforce.com/s/articleView?id=sf.email_orgwide_address.htm)
-- Salesforce Help: [Merge Fields for Email Templates](https://help.salesforce.com/s/articleView?id=sf.merge_field_types.htm)
-- Salesforce Metadata API: [EmailTemplate](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_emailtemplate.htm)
-- Trailhead: [Email Templates in Salesforce](https://trailhead.salesforce.com/content/learn/modules/lex_implementation_email)
-- Salesforce Help: [Translation Workbench](https://help.salesforce.com/s/articleView?id=sf.workbench_overview.htm)
+*Email Template Guidelines | v3.0 | Last verified 2026-05-16*

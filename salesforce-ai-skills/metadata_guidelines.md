@@ -1,832 +1,808 @@
 # Metadata Design Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Guidelines for Salesforce metadata design including custom objects, fields, record types, validation rules, custom metadata, and naming. Attach when designing or modifying any Salesforce metadata.
+**Version:** 3.0 (May 2026)
+**Developer:** Naresh | Senior Salesforce Developer
+**Purpose:** Authoritative reference for designing and deploying Salesforce schema metadata — custom objects, custom fields, validation rules, custom metadata types, record types, and the surrounding access/integration concerns. Attach when creating or modifying any `.object-meta.xml`, `.field-meta.xml`, `.validationRule-meta.xml`, `.tab-meta.xml`, or CMDT bundle.
 
----
-
-## Table of Contents
-
-1. [Required Agent Output Contract](#1-required-agent-output-contract)
-2. [Custom Objects](#2-custom-objects)
-3. [Custom Fields](#3-custom-fields)
-4. [Record Types](#4-record-types)
-5. [Page Layouts](#5-page-layouts)
-6. [Validation Rules](#6-validation-rules)
-7. [Custom Metadata Types (CMDT)](#7-custom-metadata-types-cmdt)
-8. [Custom Settings (Use Sparingly)](#8-custom-settings-use-sparingly)
-9. [External IDs](#9-external-ids)
-10. [Indexes and Selectivity](#10-indexes-and-selectivity)
-11. [Global Value Sets](#11-global-value-sets)
-12. [Dependent Fields](#12-dependent-fields)
-13. [Naming Summary Table](#13-naming-summary-table)
-14. [Descriptions and Help Text](#14-descriptions-and-help-text)
-15. [Deployment Order](#15-deployment-order)
-16. [Common AI Mistakes to Avoid](#16-common-ai-mistakes-to-avoid)
-17. [Definition of Done](#17-definition-of-done)
-18. [Validation Commands](#18-validation-commands)
-19. [Official References](#19-official-references)
+**Verified against:** [Salesforce Skills — generating-custom-object](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-object/SKILL.md) · [generating-custom-field](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-field/SKILL.md) · [generating-validation-rule](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-validation-rule/SKILL.md) · [generating-custom-tab](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-tab/SKILL.md) · [generating-custom-lightning-type](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-lightning-type/SKILL.md) · [CustomObject Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_customobject.htm) · [CustomField Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/customobject.htm) · [Custom Metadata Types Apex Reference](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_class_custom_metadata.htm). Last verified 2026-05-16.
 
 ---
 
 ## 1. Required Agent Output Contract
 
-When designing or modifying any Salesforce metadata, the AI agent MUST produce:
+Before producing any metadata, emit:
 
-### 1.1 Metadata Inventory
+1. **Inventory** — list every object, field, validation rule, record type, CMDT, and tab being created or modified.
+2. **Dependency order** — match Section 13 (deployment order). Each item must follow what it references.
+3. **Naming review** — confirm every API name follows Section 12 conventions; flag any reserved keyword collisions.
+4. **Security classification** — declare data sensitivity (PII / Internal / Public) for every new field; call out fields requiring FLS restriction.
+5. **Deployment plan** — full `sf project deploy start` command(s) with `--dry-run` first, then real deploy.
 
-List every metadata item being created or modified:
-
-```
-New Objects:
-  - SupportTicket__c (custom object)
-
-New Fields:
-  - Case.Resolution_Notes__c (Long Text Area, 32768)
-  - Case.Escalation_Reason__c (Picklist)
-  - SupportTicket__c.External_ID__c (Text 255, External ID, Unique)
-
-Modified Metadata:
-  - Validation Rule: VR_Case_SubjectRequired (adding bypass Custom Permission)
-
-Record Types:
-  - Case.Support_Case (new record type)
-```
-
-### 1.2 Dependency Order
-
-```
-1. SupportTicket__c object
-2. SupportTicket__c fields
-3. Case.Resolution_Notes__c field
-4. Case.Escalation_Reason__c field (with picklist values)
-5. Case.Support_Case record type
-6. VR_Case_SubjectRequired validation rule (after BypassCaseValidation Custom Permission)
-```
-
-### 1.3 Naming Review
-
-Confirm each item follows the naming conventions in Section 13.
-
-### 1.4 Security Classification
-
-```
-SupportTicket__c: Internal — Support team only; no PII fields
-Case.Resolution_Notes__c: Internal — visible to agents; not customer-facing
-Case.Escalation_Reason__c: Internal
-```
-
-### 1.5 Deployment Plan
-
-State the full deployment order with commands.
+A change is not done until all five sections exist in the working doc.
 
 ---
 
 ## 2. Custom Objects
 
-### Naming Convention
+### File and naming
 
+- File: `force-app/main/default/objects/<API_Name>/<API_Name>.object-meta.xml`.
+- API Name (`fullName`) is **derived from the filename** — never include a `<fullName>` tag at the object root.
+- Convention: `<Domain>__c`, PascalCase. Examples: `SupportTicket__c`, `AppLog__c`, `IntegrationConfig__c`.
+
+### Required elements
+
+| Element | Requirement | Notes |
+|---|---|---|
+| `<label>` | Required | Singular UI name |
+| `<pluralLabel>` | Required | Plural form (do not just append "s" blindly) |
+| `<nameField>` | Required | Needs `<label>` and `<type>` |
+| `<sharingModel>` | Required | See sharing rules below |
+| `<deploymentStatus>` | Required | Always `Deployed` |
+| `<visibility>` | Required | Always `Public` |
+| `<description>` | Mandatory in this project | Team owner, purpose, OWD rationale, created date |
+
+### Sharing model
+
+Default: `ReadWrite`. Two hard rules:
+
+1. If the object contains **any** Master-Detail field → `<sharingModel>` MUST be `ControlledByParent`. Using `ReadWrite` here produces the error: `Cannot set sharingModel to ReadWrite on a CustomObject with a MasterDetail relationship field`.
+2. If a Master-Detail field is later added to an existing child, the existing object's `<sharingModel>` must also be updated to `ControlledByParent` in the same deployment.
+
+Other valid values: `Private`, `Read`. Use `Private` for sensitive data objects (PII, financial, audit). Document the OWD choice in `<description>`.
+
+### Name field — Text vs AutoNumber
+
+| Type | When | Required extras |
+|---|---|---|
+| `Text` | Human-named entities (Projects, Locations, Teams) | None |
+| `AutoNumber` | Transactions, logs, tickets, requests | `<displayFormat>` (must include `{0}`), `<startingNumber>` |
+
+```xml
+<nameField>
+    <label>Ticket Number</label>
+    <type>AutoNumber</type>
+    <displayFormat>TKT-{0000000}</displayFormat>
+    <startingNumber>1</startingNumber>
+</nameField>
 ```
-<Domain>__c
-```
 
-Examples: `SupportTicket__c`, `AppLog__c`, `IntegrationConfig__c`, `FinancialTransaction__c`
+### Feature enablement (clean XML)
 
-### Required Attributes for Every Custom Object
+Only emit a flag when deviating from the platform default of `false`. Group by scenario:
 
-Every custom object created MUST have:
+- **User-facing objects** (apps, trackers, business entities): set `<enableSearch>`, `<enableReports>`, `<enableActivities>`, `<enableHistory>` to `true`.
+- **System objects** (junctions, background logs, integration buffers): omit those flags — keep the UI clean and the XML lean.
 
-| Attribute | Requirement |
-|---|---|
-| **Label** | Human-readable name |
-| **Plural Label** | Correct plural form |
-| **Description** | Team/owner, purpose, created date |
-| **API Name (DeveloperName)** | Stable, descriptive, follows naming convention |
-| **Sharing Model (OWD)** | Explicitly chosen — do NOT leave at default without conscious decision |
-| **Reports enabled** | Yes unless there is a reason not to |
-| **Activities enabled** | Yes if the object will have related activities |
-| **History tracking** | Enable if auditability is required |
+### Junction objects
 
-### Sharing Model Decision Guide
+For many-to-many: name by combining both parent entities. `Position_Candidate__c`, `Job_Application__c`. Two Master-Detail fields. Junction objects enable Roll-up Summaries on each parent.
 
-| Sharing Model | Use When |
-|---|---|
-| `Public Read/Write` | All users should be able to see and edit all records (low-sensitivity, collaborative objects) |
-| `Public Read Only` | All users see all records; only owner/above can edit |
-| `Private` | Users only see their own records; sharing must be explicitly opened via rules/teams |
-| `Controlled by Parent` | Child object inherits parent's sharing (detail side of master-detail) |
+### Relationship cap
 
-**Default to Private for sensitive data objects.** Document the OWD choice in the object description.
+- Max **2 Master-Detail** relationships per object. Third+ relationship must be Lookup.
+- Max **15 Lookup** relationships per object (soft platform limit; review before adding more).
 
-### Object Metadata XML Example
+### Object XML — canonical example
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
-    <description>
-        Support Ticket object for tracking customer support requests.
-        Owner: Support Engineering team.
-        Created: April 2026.
-        OWD: Private — Support agents see only their assigned tickets.
-    </description>
+    <description>Support Ticket. Owner: Support Eng. Created 2026-05. OWD Private — agents see only assigned tickets.</description>
+    <deploymentStatus>Deployed</deploymentStatus>
     <enableActivities>true</enableActivities>
-    <enableBulkApi>true</enableBulkApi>
-    <enableFeeds>false</enableFeeds>
     <enableHistory>true</enableHistory>
     <enableReports>true</enableReports>
     <enableSearch>true</enableSearch>
-    <enableSharing>true</enableSharing>
-    <enableStreamingApi>true</enableStreamingApi>
     <label>Support Ticket</label>
     <nameField>
         <label>Ticket Number</label>
         <type>AutoNumber</type>
         <displayFormat>TKT-{0000000}</displayFormat>
+        <startingNumber>1</startingNumber>
     </nameField>
     <pluralLabel>Support Tickets</pluralLabel>
     <sharingModel>Private</sharingModel>
+    <visibility>Public</visibility>
 </CustomObject>
 ```
+
+### Reserved API names — never use
+
+`Select`, `From`, `Where`, `Limit`, `Order`, `Group`, `User`, `External`, `View`, `Type`, `Date`, `Number`. Rename to `Status_Order__c`, `Record_Group__c`, etc.
 
 ---
 
 ## 3. Custom Fields
 
-### Naming Convention
+### File and naming
 
-- Descriptive, not abbreviated, not prefixed with temp names.
-- Use PascalCase for multi-word names.
-- NEVER use: `Temp__c`, `New__c`, `Field1__c`, `Test__c`.
+- File: `force-app/main/default/objects/<Object>/fields/<Field_API>.field-meta.xml`.
+- API Name ends with `__c`. PascalCase with underscores for word breaks: `Resolution_Notes__c`, `Escalation_Reason__c`. Never use `Temp__c`, `New__c`, `Field1__c` — the API name is permanent.
+- Derive `<fullName>` from `<label>`: capitalize each word, replace spaces with `_`, append `__c`. `Total Contract Value` → `Total_Contract_Value__c`.
 
-Examples:
-- `Resolution_Notes__c` (not `Res_Nts__c`)
-- `Escalation_Reason__c` (not `EscRsn__c`)
-- `Integration_External_ID__c` (not `ExtID__c`)
-
-### Required Attributes for Every Custom Field
+### Universal mandatory attributes
 
 | Attribute | Requirement |
 |---|---|
-| **Label** | Human-readable; matches the field's purpose |
-| **Help Text** | What the user should enter in this field — visible in the UI tooltip |
-| **Description** | Technical notes — field purpose, integration key, audit notes |
-| **Data Type** | Correct type for the data (see type selection table below) |
-| **Required** | Only if the business rule REQUIRES the value; not as a default |
+| `<fullName>` | Required; ends in `__c`; starts with a letter |
+| `<label>` | Required; Title Case |
+| `<description>` | Mandatory — state the business "why" |
+| `<inlineHelpText>` | Mandatory — actionable, user-facing; must add value beyond the label |
 
-### Data Type Selection Table
+`inlineHelpText` good: `"Enter the value in USD including tax."` Bad: `"The amount."`
 
-| Data | Recommended Type | Notes |
+### Field data types
+
+| Data | `<type>` | Required extras |
 |---|---|---|
-| Short single-line text (< 255 chars) | Text | Use for names, codes, identifiers |
-| Long free-form text | Long Text Area | Up to 131,072 characters |
-| Rich formatted text | Rich Text Area | HTML-formatted content |
-| Whole numbers | Number (0 decimal places) | Not Currency; use for counts |
-| Decimal numbers | Number (with decimals) | For non-financial decimals |
-| Money / financial values | Currency | Respects org currency settings |
-| Percentage values | Percent | Renders with % in UI |
-| True/False flag | Checkbox | Default to false for new fields |
-| Specific date (no time) | Date | Use for birthdays, deadlines |
-| Date and time | DateTime | Use for timestamps, events |
-| Controlled list of values | Picklist | Use Global Value Set for shared values |
-| Multiple selectable values | Multi-Select Picklist | Use sparingly — reporting is more complex |
-| Reference to another record | Lookup or Master-Detail | Choose based on required cascade behavior |
-| Auto-incrementing ID | Auto Number | Use for display-friendly record numbers |
-| URL | URL | Auto-renders as clickable link |
-| Email | Email | Auto-validates format |
-| Phone | Phone | Auto-formats phone numbers |
+| Auto Number | `AutoNumber` | `displayFormat` (must include `{0}`), `startingNumber` |
+| Checkbox | `Checkbox` | `defaultValue` (`false` unless required) |
+| Currency | `Currency` | Defaults: `precision=18`, `scale=2` |
+| Date | `Date` | No precision |
+| Date/Time | `DateTime` | No precision |
+| Email | `Email` | Built-in format validation |
+| Geolocation | `Location` | `scale`, `displayLocationInDecimal` |
+| Lookup | `Lookup` | `referenceTo`, `relationshipName`, `deleteConstraint` |
+| Master-Detail | `MasterDetail` | `referenceTo`, `relationshipName`, `relationshipOrder` |
+| Number | `Number` | `precision`, `scale` |
+| Percent | `Percent` | Defaults: `precision=5`, `scale=2` |
+| Phone | `Phone` | Auto-formats |
+| Picklist | `Picklist` | `valueSet` + `valueSetDefinition` + `restricted` |
+| Multi-select Picklist | `MultiselectPicklist` | `valueSet`, `visibleLines` (default 4) |
+| Text | `Text` | `length` (max 255) |
+| Text Area | `TextArea` | `<length>255</length>` — fixed, required |
+| Text (Long) | `LongTextArea` | `length` (max 131072), `visibleLines` (default 3) |
+| Text (Rich) | `Html` | `length` (max 131072), `visibleLines` (default 25) |
+| Time | `Time` | Time only, no date |
+| URL | `Url` | Validates protocol |
+| Formula | result type (`Number`, `Text`, etc.) | `formula` (CDATA), `formulaTreatBlanksAs` |
+| Roll-Up Summary | `Summary` | See Section 3.4 |
 
-### Required vs Optional Fields
+### Numeric precision and scale
 
-- Only mark a field as **required** at the object level if the business rule genuinely mandates it.
-- Over-using required fields creates friction for users and integration imports.
-- If the field is required only in certain contexts (e.g., when status = Closed), use a Validation Rule instead of making the field required.
-- Never make fields required to "clean up data" — fix the data problem with a data migration, not a required field.
+- `precision` = total digits; `scale` = decimal digits.
+- Rule: `precision ≤ 18` AND `scale ≤ precision`.
+- Digits left of decimal = `precision - scale`.
 
----
+### Picklist `restricted`
 
-## 4. Record Types
+Default: `<restricted>true</restricted>` unless user explicitly requests an open/unrestricted set. Restricted picklists are capped at 1,000 total values (active + inactive).
 
-### Rule: Only Create When Necessary
+```xml
+<valueSet>
+    <restricted>true</restricted>
+    <valueSetDefinition>
+        <sorted>false</sorted>
+        <value>
+            <fullName>Option_A</fullName>
+            <default>false</default>
+            <label>Option A</label>
+        </value>
+    </valueSetDefinition>
+</valueSet>
+```
 
-**Only create Record Types when there are materially different business processes** requiring:
-- Different picklist values for the same field (e.g., Support Case has different Priority values than Partner Case).
-- Different page layout requirements with different field sets.
-- Different validation rules or flows applicable to one record type but not another.
+### 3.1 Master-Detail vs Lookup (critical)
 
-### Do NOT Create Record Types For
+Master-Detail and Lookup are NOT interchangeable. Three attributes are **forbidden** on Master-Detail; including any one produces a deployment error.
 
-- Display-only differences (e.g., showing a different icon or color).
-- Slight variations in picklist values that could be handled by a dependent picklist.
-- Segmentation that could be handled by a custom field and filters.
-
-**Every additional record type increases maintenance overhead** — more page layouts to maintain, more PS assignments, more automation conditions. Justify clearly before creating.
-
-### Naming Convention
-
-| Component | Convention | Example |
+| Attribute | Master-Detail | Lookup |
 |---|---|---|
-| DeveloperName (API) | `PascalCase` | `Support_Case` |
-| Label | Human-readable | `Support Case` |
+| `<required>` | FORBIDDEN — always required | Optional |
+| `<deleteConstraint>` | FORBIDDEN — always cascades | Required (`SetNull`, `Restrict`, `Cascade`) |
+| `<lookupFilter>` | FORBIDDEN — Lookup only | Optional |
+| `<relationshipOrder>` | Required (`0` or `1`) | N/A |
+| `<reparentableMasterDetail>` | Optional | N/A |
+| `<writeRequiresMasterRead>` | Optional | N/A |
 
-The `DeveloperName` is permanent once deployed. Choose it carefully.
+Master-Detail field — correct form:
 
-### Referencing Record Types in Code
-
-**NEVER hardcode a Record Type ID** (e.g., `'0125e000000abcDEF'`) in Apex, Flow, or any other code. Record Type IDs differ between orgs (sandbox vs production).
-
-**ALWAYS reference by DeveloperName**:
-
-```apex
-// Correct
-Id supportCaseRTId = Schema.SObjectType.Case
-    .getRecordTypeInfosByDeveloperName()
-    .get('Support_Case')
-    .getRecordTypeId();
-
-// Also acceptable: use CMDT to store the DeveloperName value
-// Wrong — NEVER do this:
-Id rtId = '0125e000000abcDEF'; // Hardcoded ID — breaks between orgs
+```xml
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Account__c</fullName>
+    <label>Account</label>
+    <description>Links this record to its parent Account.</description>
+    <inlineHelpText>Select the Account this record belongs to.</inlineHelpText>
+    <type>MasterDetail</type>
+    <referenceTo>Account</referenceTo>
+    <relationshipName>ChildRecords</relationshipName>
+    <relationshipOrder>0</relationshipOrder>
+    <reparentableMasterDetail>false</reparentableMasterDetail>
+    <writeRequiresMasterRead>false</writeRequiresMasterRead>
+</CustomField>
 ```
 
-### Custom Metadata for Record Type References
+Lookup field — same shape, but `<type>Lookup</type>`, no `relationshipOrder`, add `<required>false</required>` and `<deleteConstraint>SetNull|Restrict|Cascade</deleteConstraint>`.
 
-If multiple places in code reference the same Record Type, centralize it in a Custom Metadata record:
+- `relationshipName` must be plural PascalCase: `Travel_Bookings`, `ChildRecords`.
+- `relationshipOrder` on Master-Detail: first M-D field on the object = `0`, second = `1`.
 
+### 3.2 Roll-Up Summary fields
+
+Highest deployment failure rate of any field type. Strict rules:
+
+| Element | Requirement |
+|---|---|
+| `<type>` | Always `Summary` |
+| `<summaryOperation>` | Required: `count`, `sum`, `min`, or `max` |
+| `<summaryForeignKey>` | Required; format `ChildObject__c.MasterDetailField__c` |
+| `<summarizedField>` | Required for `sum`/`min`/`max`; **omitted** for `count`; format `ChildObject__c.FieldToSummarize__c` |
+
+**Forbidden on Roll-Up Summary:** `<precision>`, `<scale>`, `<required>`, `<length>` — Summary inherits from the summarized field.
+
+The child object must have a Master-Detail field pointing to the parent. Summary fields can only live on the parent.
+
+```xml
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Total_Amount__c</fullName>
+    <label>Total Amount</label>
+    <description>Sum of all line item amounts.</description>
+    <inlineHelpText>Automatically calculated from child line items.</inlineHelpText>
+    <type>Summary</type>
+    <summaryOperation>sum</summaryOperation>
+    <summarizedField>Order_Line_Item__c.Amount__c</summarizedField>
+    <summaryForeignKey>Order_Line_Item__c.Order__c</summaryForeignKey>
+</CustomField>
 ```
-CMDT: RecordTypeConfig__mdt
-Fields: ObjectApiName__c, RecordTypeDeveloperName__c, RecordTypeLabel__c
+
+For `count`, omit `<summarizedField>` entirely. `min` / `max` use the same shape as `sum`.
+
+### 3.3 Formula fields
+
+- `<type>` is the **result data type** (`Number`, `Text`, `Date`, etc.) — NOT `Formula`. `<type>Formula</type>` is invalid.
+- `<returnType>` does not exist in the Metadata API. Never use it.
+- `<formula>` content MUST be wrapped in `<![CDATA[ ... ]]>` to protect operators like `&`, `<`, `>`.
+- `<formulaTreatBlanksAs>` rule:
+  - Numeric (`Number`, `Currency`, `Percent`) → `BlankAsZero`
+  - Text / `Date` / `DateTime` → `BlankAsBlank`
+
+```xml
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Calculated_Value__c</fullName>
+    <label>Calculated Value</label>
+    <description>Sum of Field1 and Field2.</description>
+    <type>Number</type>
+    <precision>18</precision>
+    <scale>2</scale>
+    <formula><![CDATA[Field1__c + Field2__c]]></formula>
+    <formulaTreatBlanksAs>BlankAsZero</formulaTreatBlanksAs>
+</CustomField>
 ```
+
+Function rules (apply to validation rules too):
+
+| Function | Rule |
+|---|---|
+| `TEXT()` | Never wrap a Text field. Remove the wrapper. |
+| `VALUE()` | Only on Text. If the argument is a Number, drop `VALUE()`. |
+| `DAY()`, `MONTH()`, `YEAR()` | Date only. For DateTime, convert: `DAY(DATEVALUE(DT__c))`. |
+| `DATEVALUE()` | DateTime → Date. If the argument is already Date, drop it. |
+| `ISPICKVAL()` | MUST be used for picklist equality. Never `==` on a picklist. |
+| `ISCHANGED()` | Use directly; don't compare against `PRIORVALUE()` manually. |
+| `CASE()` | Last argument is the default. Total argument count must be even. |
+
+Formulas that reference other custom fields require those fields deployed first.
+
+### 3.4 External IDs
+
+External IDs mark a field as an integration matching key. Used for `upsert`, data migration, deduplication.
+
+- Set `<externalId>true</externalId>`. Applicable on Text, Number, Email.
+- Max **3 External ID fields per object** — choose deliberately.
+- External ID fields are **automatically indexed**.
+- Add `<unique>true</unique>` if the value must uniquely identify a record.
+- `<caseSensitive>` defaults to `false`; set to `true` only if external system distinguishes case.
+
+```xml
+<fields>
+    <fullName>Integration_External_ID__c</fullName>
+    <label>Integration External ID</label>
+    <description>External ID for CRM record matching. Populated by sync; do not modify.</description>
+    <inlineHelpText>Auto-populated by the integration. Do not edit.</inlineHelpText>
+    <type>Text</type>
+    <length>255</length>
+    <externalId>true</externalId>
+    <unique>true</unique>
+    <caseSensitive>false</caseSensitive>
+</fields>
+```
+
+Upsert pattern in Apex: `Database.upsert(record, MyObj__c.Integration_External_ID__c, false);`
+
+### 3.5 Required vs optional
+
+- Mark a field `<required>true</required>` only if the business rule unconditionally demands a value.
+- Context-dependent requirements (required when Status = Closed) → use a **Validation Rule**, not field-level required.
+- Never use `required` to "clean up data" — fix data with a migration, not by blocking saves.
 
 ---
 
-## 5. Page Layouts
+## 4. Validation Rules
 
-### Rules
+### Naming and structure
 
-- Assign page layouts to record types and profiles/apps via FlexiPage activation (Dynamic Forms).
-- **Prefer Dynamic Forms over page layouts** for complex conditional field visibility — Dynamic Forms eliminate the need for multiple page layouts for the same record type.
-- Page layouts are still needed for: Related List ordering, Quick Action configuration, Standard button layout (when not using Dynamic Actions).
+- File: validation rules nest inside the object's `.object-meta.xml` as `<validationRules>` blocks, or as separate `.validationRule-meta.xml` files in `force-app/main/default/objects/<Object>/validationRules/`.
+- `<fullName>` MUST NOT end in `__c`. Validation rules follow different naming than custom fields.
+- Max 40 characters, alphanumeric + underscores, must begin with a letter, no trailing underscore, no consecutive underscores.
+- Project convention: `VR_<ObjectApiName>_<Intent>`. Examples: `VR_Case_SubjectRequired`, `VR_Opportunity_CloseDateFuture`, `VR_SupportTicket_ResolutionOnClose`.
 
-### Compact Layouts
+### Required components
 
-- Define a compact layout for every object that:
-  - Appears in mobile views.
-  - Appears as a card in Related Lists.
-  - Appears in the Activity Feed or chatter highlights.
-- Compact layout should include: the record name/number, 3-5 most relevant fields.
-- Never leave compact layout at the system default (which shows ID and Name only).
-
-### Page Layout Naming Convention
-
-```
-<ObjectLabel> <RecordTypeLabel> Layout
-```
-
-Example: `Case Support Case Layout`, `Account Partner Account Layout`
-
----
-
-## 6. Validation Rules
-
-### Naming Convention
-
-```
-VR_<ObjectApiName>_<Intent>
-```
-
-Examples:
-- `VR_Case_SubjectRequired`
-- `VR_Opportunity_CloseDateFuture`
-- `VR_Contact_EmailFormat`
-- `VR_SupportTicket__c_ResolutionNotesOnClose`
-
-### Required Components
-
-Every validation rule MUST have:
+Every rule MUST have:
 
 1. **Descriptive name** following the convention.
-2. **Description** explaining what the rule validates and why.
-3. **User-friendly, actionable error message** — not a technical error code.
-4. **Bypass mechanism** via Custom Permission (not profile check).
+2. **`<active>true</active>`** unless intentionally disabled.
+3. **`<description>`** explaining what it validates and why.
+4. **User-friendly `<errorMessage>`** (max 255 chars) — never a technical code.
+5. **Custom Permission bypass** — never check by profile.
 
-### Bypass Pattern
+### Bypass pattern
 
-**ALWAYS** add a Custom Permission bypass to validation rules. This allows trusted users (support leads, admins, integration users) to create records that would otherwise fail validation.
-
-```
-AND(
-  <validation condition here>,
-  NOT($Permission.Bypass_<ObjectName>_Validation)
-)
-```
-
-Full example:
+Every validation rule in this org wraps its condition in `NOT($Permission.<CustomPermission>)` so trusted users (support leads, integration users, admins) can override. The Custom Permission must be deployed **before** the validation rule.
 
 ```
 AND(
-  ISBLANK(Subject),
-  NOT($Permission.BypassCaseValidation)
+    ISBLANK(Subject),
+    NOT($Permission.BypassCaseValidation)
 )
 ```
 
-Error message: `"Subject is required. Please enter a summary of the support issue before saving."`
+### Error message guidelines
 
-### Error Message Guidelines
-
-| Bad Error Message | Good Error Message |
+| Bad | Good |
 |---|---|
-| `"Validation failed"` | `"Case subject is required. Please enter a brief description of the issue."` |
-| `"Field missing"` | `"Resolution Notes are required when closing a case. Please document the resolution before changing status to Closed."` |
+| `"Validation failed"` | `"Case Subject is required. Please enter a brief description of the issue."` |
+| `"Field missing"` | `"Resolution Notes are required when closing a case. Please document the resolution before changing Status to Closed."` |
 | `"Invalid date"` | `"Close Date must be today or in the future. Please correct the Close Date."` |
 
-### Validation Rule XML Example
+### Validation rule XML
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <ValidationRule xmlns="http://soap.sforce.com/2006/04/metadata">
     <fullName>VR_Case_SubjectRequired</fullName>
     <active>true</active>
-    <description>
-        Ensures the Case Subject field is populated before save.
-        Bypass: Assign BypassCaseValidation custom permission to override.
-        Owner: Support Team. Created: April 2026.
-    </description>
-    <errorConditionFormula>
-        AND(
-            ISBLANK(Subject),
-            NOT($Permission.BypassCaseValidation)
-        )
-    </errorConditionFormula>
+    <description>Blocks save when Subject is blank. Bypass: BypassCaseValidation. Owner: Support.</description>
+    <errorConditionFormula><![CDATA[AND(ISBLANK(Subject), NOT($Permission.BypassCaseValidation))]]></errorConditionFormula>
     <errorDisplayField>Subject</errorDisplayField>
     <errorMessage>Subject is required. Please enter a brief summary of the issue before saving.</errorMessage>
 </ValidationRule>
 ```
 
+Any formula containing `<`, `>`, or `&` MUST be wrapped in `<![CDATA[...]]>`.
+
+### "Update the formula" — replace vs append
+
+When instructed to modify an existing rule's formula, distinguish:
+
+- **"Update the formula to X"** → replace the existing logic entirely.
+- **"Update the formula to also X"** → keep the existing logic and append, usually by wrapping in `AND()` or `OR()`.
+
 ---
 
-## 7. Custom Metadata Types (CMDT)
+## 5. Custom Metadata Types (CMDT)
 
 ### Purpose
 
-Custom Metadata Types (CMDT) are the standard mechanism for storing configuration data in Salesforce. They are:
-- Deployable via package.xml (unlike Custom Settings, which require data migration separately).
-- Readable in Apex, Flow, Validation Rules, and Formulas without DML limits.
-- Version-controllable in source-tracked projects.
-- Accessible in all sandbox and production orgs once deployed.
+CMDT is the **default mechanism** for configuration data in modern Salesforce orgs:
 
-### When to Use CMDT
+- Deployable via `package.xml` (data ships with metadata).
+- Readable in Apex, Flow, Validation Rules, and Formula fields with no DML governor consumption.
+- Version-controlled in source-tracked projects.
+- Available immediately in every sandbox and production after deployment.
+
+### When to use CMDT
 
 - Configuration values (thresholds, limits, feature flags).
-- Integration settings (endpoint URLs, credentials are NOT appropriate — use Named Credentials for secrets).
-- Picklist matrices (what Status values are valid for a given Record Type).
-- Mapping tables (country code → region, error code → user message).
-- Record type DeveloperName references.
-- Bypass permission names registry.
+- Integration endpoint URLs (NEVER secrets — use Named Credentials).
+- Picklist matrices (valid Status values per Record Type).
+- Mapping tables (country → region, error code → user message).
+- Record Type DeveloperName lookups.
+- Bypass permission name registry.
 
-### When NOT to Use CMDT
+### When NOT to use CMDT
 
-- **Secrets / credentials** — use Named Credentials or an external secrets vault.
-- **User- or profile-level overrides** — use Custom Settings (Hierarchy type) instead.
-- **Large datasets** (thousands of records) — CMDT has a per-org record limit; use a custom object for large datasets.
+- **Secrets/credentials** → Named Credentials or an external vault.
+- **User- or profile-level overrides** → Custom Settings (Hierarchy).
+- **Large datasets (thousands of records)** → CMDT has per-org row limits; use a custom object.
 
-### Naming Convention
+### Naming
 
+- Object: `CMDT_<Domain>__mdt`. Examples: `CMDT_Integration__mdt`, `CMDT_FeatureFlag__mdt`, `CMDT_RecordTypeConfig__mdt`.
+- Record `DeveloperName`: stable, descriptive — never temp names. The DeveloperName is permanent.
+
+### Querying CMDT — Apex methods, NOT SOQL
+
+**Use the typed getter methods, not SOQL**, for transactional reads. The methods are governor-free; SOQL consumes the SOQL-query limit and is slower.
+
+```apex
+// Single record by DeveloperName — fastest, governor-free
+CMDT_Integration__mdt cfg = CMDT_Integration__mdt.getInstance('CRM_Integration');
+if (cfg != null && cfg.Is_Active__c) {
+    String endpoint = cfg.Endpoint_URL__c;
+    Integer timeoutSec = (Integer) cfg.Timeout_Seconds__c;
+}
+
+// All records — Map<DeveloperName, record>
+Map<String, CMDT_Integration__mdt> all = CMDT_Integration__mdt.getAll();
+for (CMDT_Integration__mdt c : all.values()) { /* ... */ }
+
+// SOQL only for setup/admin tooling, NOT runtime hot paths
+List<CMDT_Integration__mdt> active =
+    [SELECT DeveloperName, Endpoint_URL__c FROM CMDT_Integration__mdt WHERE Is_Active__c = true];
 ```
-CMDT_<Domain>__mdt
-```
 
-Examples: `CMDT_Integration__mdt`, `CMDT_FeatureFlag__mdt`, `CMDT_RecordTypeConfig__mdt`
+Rule of thumb: code that runs on every record save / API call / page load → `getInstance()` or `getAll()`. SOQL on CMDT is for admin pages, validation tooling, or one-off batch setup.
 
-Records within a CMDT use a `DeveloperName` that must be stable (no temp names).
-
-### Example: Integration Config CMDT
+CMDT record file (at `customMetadata/CMDT_Integration.CRM_Integration.md-meta.xml`):
 
 ```xml
-<!-- Object definition -->
-<?xml version="1.0" encoding="UTF-8"?>
-<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
-    <description>
-        Integration configuration for external system connections.
-        Owner: Integration Team. Created: April 2026.
-        NOTE: Do not store credentials here. Use Named Credentials for secrets.
-    </description>
-    <label>Integration Config</label>
-    <pluralLabel>Integration Configs</pluralLabel>
-    <fields>
-        <fullName>Endpoint_URL__c</fullName>
-        <label>Endpoint URL</label>
-        <type>Url</type>
-        <description>Base URL for the external system API endpoint.</description>
-    </fields>
-    <fields>
-        <fullName>Is_Active__c</fullName>
-        <label>Is Active</label>
-        <type>Checkbox</type>
-        <defaultValue>true</defaultValue>
-        <description>When false, the integration is disabled without code changes.</description>
-    </fields>
-    <fields>
-        <fullName>Timeout_Seconds__c</fullName>
-        <label>Timeout (Seconds)</label>
-        <type>Number</type>
-        <precision>5</precision>
-        <scale>0</scale>
-        <description>HTTP request timeout in seconds. Default: 30.</description>
-    </fields>
-</CustomObject>
-```
-
-```xml
-<!-- CMDT Record -->
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata" xsi:type="CustomMetadata">
     <label>CRM Integration</label>
     <protected>false</protected>
-    <values>
-        <field>Endpoint_URL__c</field>
-        <value xsi:type="xsd:string">https://api.external-crm.com/v2</value>
-    </values>
-    <values>
-        <field>Is_Active__c</field>
-        <value xsi:type="xsd:boolean">true</value>
-    </values>
-    <values>
-        <field>Timeout_Seconds__c</field>
-        <value xsi:type="xsd:double">30</value>
-    </values>
+    <values><field>Endpoint_URL__c</field><value xsi:type="xsd:string">https://api.external-crm.com/v2</value></values>
+    <values><field>Is_Active__c</field><value xsi:type="xsd:boolean">true</value></values>
+    <values><field>Timeout_Seconds__c</field><value xsi:type="xsd:double">30</value></values>
 </CustomMetadata>
-```
-
-### Accessing CMDT in Apex
-
-```apex
-// Query CMDT (no DML governor limit consumption)
-CMDT_Integration__mdt config = CMDT_Integration__mdt.getInstance('CRM_Integration');
-if (config != null && config.Is_Active__c) {
-    String endpoint = config.Endpoint_URL__c;
-    Integer timeout = (Integer) config.Timeout_Seconds__c;
-    // proceed with integration call
-}
 ```
 
 ### package.xml for CMDT
 
 ```xml
-<!-- Object definition -->
 <types>
     <members>CMDT_Integration__mdt</members>
     <name>CustomObject</name>
 </types>
-
-<!-- CMDT Records -->
 <types>
-    <members>CMDT_Integration__mdt.CRM_Integration</members>
+    <members>CMDT_Integration.CRM_Integration</members>
     <name>CustomMetadata</name>
 </types>
 ```
 
----
-
-## 8. Custom Settings (Use Sparingly)
-
-### When Custom Settings Are Still Appropriate
-
-Custom Settings are appropriate when:
-- You need **user- or profile-level data overrides** (Hierarchy Custom Settings).
-- Legacy automations rely on Custom Settings and the cost of migration exceeds the benefit.
-
-For all other cases, prefer CMDT.
-
-### Custom Settings Types
-
-| Type | Description | Use When |
-|---|---|---|
-| **List Custom Settings** | Org-wide named settings (no hierarchy) | Shared configuration accessible across the org |
-| **Hierarchy Custom Settings** | Org / Profile / User level with override hierarchy | When individual users or profiles need different values |
-
-### Hierarchy Custom Setting Behavior
-
-Salesforce evaluates hierarchy settings in this order (most specific wins):
-1. User-level setting (if set for the running user)
-2. Profile-level setting (if set for the user's profile)
-3. Org-level setting (default)
-
-### Prefer CMDT Over Custom Settings
+### CMDT vs Custom Settings
 
 | Concern | Custom Settings | CMDT |
 |---|---|---|
-| Deployable via package.xml | No (data only) | Yes |
-| Version controlled with code | No | Yes |
+| Deployable via `package.xml` | No (data only) | Yes |
+| Version-controlled with code | No | Yes |
 | Accessible in Formula fields | No | Yes |
-| User/Profile-level override | Yes | No |
-| Recommended for new development | No | Yes |
+| Available in Validation Rules | No | Yes |
+| User/Profile-level overrides | Yes (Hierarchy) | No |
+| Recommended for new development | No | **Yes** |
+
+Use Custom Settings only for hierarchy-level overrides (user/profile/org). Everything else is CMDT.
 
 ---
 
-## 9. External IDs
+## 6. Record Types
 
-### Purpose
+### Rule: justify before creating
 
-External IDs mark a field as an integration key for external system record matching. Used for:
-- `upsert` operations: find-and-update or insert based on external key.
-- Data migration: matching source system IDs during import.
-- Deduplication checks.
+Create a Record Type only when there are **materially different business processes** needing one of:
 
-### Rules
+- Different picklist values for the same field.
+- Different page-layout / Dynamic Form field sets.
+- Different validation rules or flows scoped to one type but not another.
 
-- Mark integration key fields as External ID.
-- External ID fields are automatically indexed.
-- Maximum 3 External ID fields per object — choose wisely.
-- External IDs should use the `Unique` constraint if records should be uniquely identified by this value.
-- Field type: Text (max 255 characters) or Number — most external IDs are Text.
+**Do not create** Record Types for: display-only differences (icons, colors), small picklist variations (use dependent picklists), or segmentation that a custom field + filter handles.
 
-### XML Example
+Each additional Record Type multiplies maintenance — more layouts, more permission set assignments, more automation gates. Document the justification in the Record Type description.
 
-```xml
-<fields>
-    <fullName>Integration_External_ID__c</fullName>
-    <description>
-        External ID for CRM system record matching.
-        Used for upsert operations during data sync.
-        Do not modify or clear this field once populated.
-    </description>
-    <externalId>true</externalId>
-    <label>Integration External ID</label>
-    <length>255</length>
-    <type>Text</type>
-    <unique>true</unique>
-    <caseSensitive>false</caseSensitive>
-</fields>
-```
+### Naming
 
-### Upsert Using External ID in Apex
+| Component | Convention | Example |
+|---|---|---|
+| `DeveloperName` (API) | PascalCase, snake-OK | `Support_Case` |
+| `Label` | Human-readable | `Support Case` |
+
+`DeveloperName` is permanent once deployed.
+
+### Referencing Record Types in code — NEVER hardcode IDs
+
+Record Type IDs differ between sandbox and production. Hardcoding an ID guarantees breakage on deployment.
 
 ```apex
-// Upsert using external ID field
-Case__c incomingCase = new Case__c();
-incomingCase.Integration_External_ID__c = externalKey;
-incomingCase.Subject__c = 'Incoming Case';
+// CORRECT — resolved by DeveloperName at runtime
+Id supportCaseRtId = Schema.SObjectType.Case
+    .getRecordTypeInfosByDeveloperName()
+    .get('Support_Case')
+    .getRecordTypeId();
 
-Database.upsert(incomingCase, Case__c.Integration_External_ID__c, false);
+// CORRECT — centralize via CMDT for cross-class references
+CMDT_RecordTypeConfig__mdt cfg =
+    CMDT_RecordTypeConfig__mdt.getInstance('Case_Support');
+String devName = cfg.RecordTypeDeveloperName__c;
+
+// WRONG — never do this
+Id rtId = '0125e000000abcDEF'; // breaks between orgs
 ```
+
+For Flow: use the `$RecordType` global or the DeveloperName lookup via Get Records. Never paste an ID into a Decision element.
 
 ---
 
-## 10. Indexes and Selectivity
+## 7. Custom Tabs
 
-### Standard Indexed Fields (No Action Needed)
+### File and structure
 
-These fields are automatically indexed by Salesforce:
-- `Id`
-- `Name`
-- `OwnerId`
-- `CreatedDate`
-- `LastModifiedDate`
-- All Lookup and Master-Detail relationship fields
-- All External ID fields
-- `SystemModstamp`
+- File: `force-app/main/default/tabs/<Tab_Name>.tab-meta.xml`.
+- Object tabs: the filename is the object API name (`Support_Ticket__c.tab-meta.xml`).
+- Web/Visualforce tabs: descriptive filename (`Knowledge_Base.tab-meta.xml`).
+- Root element is `<CustomTab>` (not `<Tab>`).
 
-### Custom Index Requests
+### Strict element allowlist
 
-For custom fields that are frequently used as query filters on high-volume objects (millions of records), request a custom index via Salesforce Support (case with Salesforce Technical Support).
+Only these elements are valid per tab type. Anything else fails deployment.
 
-**Before requesting a custom index**, confirm the field qualifies:
-- It is used in a `WHERE` clause in frequently-run queries.
-- The object has a large record volume (typically 100K+ records).
-- The field itself is selective.
+| Tab Type | Allowed elements only |
+|---|---|
+| Object | `<customObject>true</customObject>`, `<motif>`, optional `<description>` |
+| Web | `<customObject>false</customObject>`, `<label>`, `<motif>`, `<url>`, `<urlEncodingKey>UTF-8</urlEncodingKey>`, optional `<description>`, `<frameHeight>` |
+| Visualforce | `<customObject>false</customObject>`, `<label>`, `<motif>`, `<page>`, optional `<description>` |
 
-### Selectivity Rule
+### Forbidden — guaranteed deployment errors
 
-A query filter is **selective** if it reduces the result set to less than approximately **10% of total object records** (for objects with > 100K records). If the filter is not selective, Salesforce may perform a full table scan even if an index exists.
+`<sobjectName>`, `<name>`, `<fullName>`, `<apiVersion>`, `<isHidden>`, `<tabVisibility>`, `<type>`, `<mobileReady>`, `<urlFrameHeight>`, `<urlType>`, `<urlRedirect>`, `<encodingKey>`, `<height>`, `<auraComponent>`. Also `<label>` on object tabs (object tabs inherit label from the object). Also empty elements (`<page></page>`).
 
-**Design queries with this in mind:**
-- Filter on indexed, selective fields first.
-- Combine multiple filters to achieve selectivity.
-- Avoid `LIKE '%value%'` — leading wildcards disable index use.
-- Avoid `WHERE Status != 'Closed'` on large objects — `!=` is generally not selective.
+### Motif — must be unique per tab
 
-### Query Design Patterns
-
-```apex
-// GOOD — filters on selective, indexed fields first
-List<Case> cases = [
-    SELECT Id, Subject, Status
-    FROM Case
-    WHERE OwnerId = :userId          // indexed, highly selective
-    AND Status = 'Open'              // reduces further
-    AND CreatedDate = LAST_N_DAYS:7  // indexed
-    WITH USER_MODE
-    ORDER BY CreatedDate DESC
-    LIMIT 50
-];
-
-// BAD — non-selective filter on large object
-List<Case> cases = [
-    SELECT Id, Subject
-    FROM Case
-    WHERE Status != 'Closed'  // NOT selective — most cases may be open
-];
-```
-
----
-
-## 11. Global Value Sets
-
-### Purpose
-
-Global Value Sets are picklist value definitions shared across multiple fields on multiple objects. Instead of maintaining the same list of values separately on each field, maintain them once and reference them from multiple fields.
-
-### When to Use
-
-- When the same set of picklist values is used on multiple fields or objects (e.g., `Region` values used on Account, Contact, and Opportunity).
-- When changes to picklist values should automatically propagate to all fields using the set.
-
-### When NOT to Use
-
-- When the values are unique to a single field — create a standard field-level picklist instead.
-- When different fields need slightly different subsets of the same concept — the global value set is all-or-nothing.
-
-### Rules
-
-- Name global value sets descriptively: `Region_Values`, `Priority_Levels`, `Status_Codes`.
-- **Changes to a Global Value Set affect ALL fields that use it** — review all dependent fields and automations before modifying a global value set.
-- Document which fields and objects use each Global Value Set.
-
-### Global Value Set XML
+`<motif>` is the icon style. Never reuse the same motif across every tab. Pick a motif whose name semantically matches the tab's purpose: `Custom39: Telescope` for an observatory object, `Custom98: Truck` for logistics, etc.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<GlobalValueSet xmlns="http://soap.sforce.com/2006/04/metadata">
-    <customValue>
-        <fullName>North_America</fullName>
-        <default>false</default>
-        <label>North America</label>
-    </customValue>
-    <customValue>
-        <fullName>Europe</fullName>
-        <default>false</default>
-        <label>Europe</label>
-    </customValue>
-    <customValue>
-        <fullName>Asia_Pacific</fullName>
-        <default>false</default>
-        <label>Asia Pacific</label>
-    </customValue>
-    <description>
-        Region values shared across Account, Contact, and Opportunity objects.
-        Owner: RevOps Team. Changes here affect all fields using this value set.
-        Approvals required before modifying. Created: April 2026.
-    </description>
-    <label>Region Values</label>
-    <sorted>false</sorted>
-</GlobalValueSet>
+<CustomTab xmlns="http://soap.sforce.com/2006/04/metadata">
+    <customObject>true</customObject>
+    <motif>Custom39: Telescope</motif>
+</CustomTab>
 ```
 
 ---
 
-## 12. Dependent Fields
+## 8. Page Layouts — Defer to Lightning App Builder
 
-### Overview
+**For new work, prefer FlexiPages (Lightning Record Pages) with Dynamic Forms over Page Layouts.** Dynamic Forms let one page handle conditional visibility, removing the need for multiple page layouts per record type. See `flexipage_guidelines.md` for the authoring rules.
 
-A dependent field relationship links a **controlling field** (usually a picklist) to a **dependent field** (a picklist filtered by the controlling field's value). Only the values valid for the selected controlling value appear in the dependent field.
+Page layouts are still required for:
 
-### Use Case Example
+- Related List ordering (until Dynamic Related Lists fully replaces them).
+- Quick Action configuration.
+- Standard button layout (when not using Dynamic Actions).
+- Compact Layouts (mobile, related-list cards, activity feed cards).
 
-Controlling Field: `Product_Line__c` (values: Hardware, Software, Services)
-Dependent Field: `Product_Category__c`
-- When `Product_Line__c = Hardware`: show Desktop, Laptop, Server
-- When `Product_Line__c = Software`: show CRM, ERP, Analytics
-- When `Product_Line__c = Services`: show Implementation, Support, Training
+### Compact layouts
 
-### Rules
+Define a compact layout on every custom object that appears in mobile views, as a related-list card, or in activity highlights. Include: record name + 3-5 most relevant fields. Never leave the system default (Id + Name only).
 
-- Document the full dependency matrix (controlling value → allowed dependent values) before building.
-- Store the matrix in a Custom Metadata record if code needs to validate the combinations programmatically.
-- Test all controlling/dependent combinations after deployment.
-- Dependent fields do not work with Multi-Select Picklists as the controlling field.
+### Naming (when page layouts are needed)
 
-### package.xml for Global Value Sets
-
-```xml
-<types>
-    <members>Region_Values</members>
-    <name>GlobalValueSet</name>
-</types>
 ```
+<ObjectLabel> <RecordTypeLabel> Layout
+```
+
+Example: `Case Support Case Layout`, `Account Partner Account Layout`.
 
 ---
 
-## 13. Naming Summary Table
+## 9. Field-Level Security, CRUD, and Access
 
-| Metadata Type | Naming Convention | Example |
+### Where access is granted
+
+Access to custom objects and fields lives in **Permission Sets** (and Permission Set Groups), never on Profiles. See `permission_set_guidelines.md` for the authoring rules. The metadata side concerns:
+
+- Every new custom object MUST have a corresponding Permission Set granting CRUD (or be intentionally invisible to all but the System Admin profile).
+- Every new custom field that holds business data MUST have FLS Read/Edit declared on the relevant Permission Sets in the same deployment wave.
+
+### FLS-sensitive fields
+
+Mark FLS Edit = false on Permission Sets when the field is:
+
+- System-populated (integration external ID, audit timestamps, computed roll-up surrogates).
+- Customer-confidential and only visible to specific roles (financial data, credit info, internal notes).
+- Owned by a separate team (e.g., a Finance custom field on Case — Support can read, only Finance can edit).
+
+### Apex and FLS enforcement
+
+In production code, query with `WITH USER_MODE` (preferred for modern Apex) or `WITH SECURITY_ENFORCED` to honor FLS at the runtime layer. The metadata-side responsibility is making sure the FLS settings on Permission Sets reflect the business intent — Apex respects what metadata declares.
+
+---
+
+## 10. External IDs and Integration Indexing
+
+See Section 3.4 for the field-level rules. Integration-design concerns:
+
+- Choose **one** External ID per object as the canonical integration key. If you need multiple sources (e.g., NetSuite ID + Stripe customer ID), use multiple External ID fields but document which one is the "primary" matching key for the upsert pipeline.
+- External ID values must be stable in the source system. If the source rotates IDs (e.g., on customer merge), the integration breaks silently — design the upsert to handle re-keying.
+- For composite keys (e.g., `external_system + external_id`), concatenate into a single Text(255) External ID field. Salesforce External IDs are single-field.
+
+### Cross-org migration
+
+External IDs are the foundation of org-to-org data migration. When seeding a new sandbox: export records with the External ID, import via `upsert`, and references resolve automatically. Without External IDs, every Lookup field must be re-mapped manually.
+
+---
+
+## 11. Indexes and Selectivity
+
+### Auto-indexed fields (no action needed)
+
+Salesforce automatically indexes:
+
+- `Id`, `Name`, `OwnerId`, `CreatedDate`, `LastModifiedDate`, `SystemModstamp`.
+- All Lookup and Master-Detail fields.
+- All External ID fields.
+- All `Unique` fields.
+
+### Custom index requests
+
+For high-volume custom fields that are frequently filtered on:
+
+1. Confirm the field is used in `WHERE` clauses on frequently-run queries.
+2. Confirm the object has > 100K records.
+3. Confirm the filter is **selective** (returns < ~10% of total records).
+4. File a case with Salesforce Technical Support requesting the custom index.
+
+Before requesting an index, prove the selectivity case with EXPLAIN-plan analysis (`/services/data/vXX.0/query/?explain=`).
+
+### Selectivity rule
+
+A filter is selective if it returns < approximately **10% of total object records** (for objects with > 100K records). Non-selective filters cause full table scans even with an index present.
+
+### Anti-patterns
+
+```apex
+// GOOD — selective, indexed filters first
+[SELECT Id FROM Case
+ WHERE OwnerId = :uId AND Status = 'Open' AND CreatedDate = LAST_N_DAYS:7
+ WITH USER_MODE LIMIT 50];
+
+// BAD — != is not selective on a large object
+[SELECT Id FROM Case WHERE Status != 'Closed'];
+
+// BAD — leading wildcard disables index use
+[SELECT Id FROM Case WHERE Subject LIKE '%error%'];
+```
+
+Use SOSL (`FIND ... IN ALL FIELDS`) for substring searches across text.
+
+---
+
+## 12. Naming Summary
+
+| Metadata Type | Convention | Example |
 |---|---|---|
-| Custom Object | `<Domain>__c` (PascalCase) | `SupportTicket__c` |
-| Custom Field | `<DescriptiveName>__c` (PascalCase) | `Resolution_Notes__c` |
-| Record Type DeveloperName | `PascalCase` (no spaces) | `Support_Case` |
+| Custom Object | `<Domain>__c` PascalCase | `SupportTicket__c` |
+| Custom Field | `<DescriptiveName>__c` PascalCase | `Resolution_Notes__c` |
+| Master-Detail / Lookup `relationshipName` | Plural PascalCase | `Travel_Bookings`, `ChildRecords` |
+| Roll-Up Summary | Describes the metric | `Total_Amount__c`, `Line_Item_Count__c` |
+| External ID | `<System>_External_ID__c` | `NetSuite_External_ID__c` |
+| Validation Rule | `VR_<Object>_<Intent>` — no `__c` suffix | `VR_Case_SubjectRequired` |
+| Custom Permission (bypass) | PascalCase, no prefix | `BypassCaseValidation` |
+| Record Type DeveloperName | PascalCase / snake | `Support_Case` |
 | Page Layout | `<Object> <RecordType> Layout` | `Case Support Case Layout` |
-| Validation Rule | `VR_<Object>_<Intent>` | `VR_Case_SubjectRequired` |
+| Compact Layout | `<Object> Compact` | `Support Ticket Compact` |
 | Custom Metadata Type | `CMDT_<Domain>__mdt` | `CMDT_Integration__mdt` |
-| Custom Settings | `CS_<Domain>__c` | `CS_FeatureFlags__c` |
+| Custom Metadata Record | Stable DeveloperName | `CRM_Integration` |
+| Custom Settings (legacy) | `CS_<Domain>__c` | `CS_FeatureFlags__c` |
 | Global Value Set | `<Description>_Values` | `Region_Values` |
+| Custom Tab | Filename = object API or descriptive | `Support_Ticket__c.tab-meta.xml` |
 | Permission Set | `PS_<DomainOrRole>` | `PS_SupportAgent` |
 | Permission Set Group | `PSG_<DomainOrRole>` | `PSG_SupportAgent` |
-| Muting Permission Set | `MPS_<PSGName>_<Intent>` | `MPS_SupportAgent_NoCaseDelete` |
-| Custom Permission | `PascalCase` (no prefix) | `BypassCaseValidation` |
-| Apex Class | `<Domain><Type>` (PascalCase) | `CaseDashboardController` |
+| Muting Permission Set | `MPS_<PSG>_<Intent>` | `MPS_SupportAgent_NoCaseDelete` |
+| Apex Class | `<Domain><Type>` PascalCase | `CaseDashboardController` |
 | Apex Test Class | `<ClassName>Test` | `CaseDashboardControllerTest` |
-| LWC Component | `camelCase` | `caseTimelineComponent` |
-| Flow | `<Object>_<Action>_<Type>` | `Case_Escalation_Screen_Flow` |
-| Flow (Record-triggered) | `<Object>_<Trigger>_<Action>` | `Case_AfterUpdate_NotifyOwner` |
+| LWC | camelCase | `caseTimelineComponent` |
+| Flow | `<Object>_<Trigger>_<Action>` | `Case_AfterUpdate_NotifyOwner` |
 | Email Template | `<Object>_<Intent>` | `Case_Support_Acknowledgement` |
-| Email Folder | `<Team>_<Domain>_Templates` | `Support_Team_Templates` |
 | FlexiPage | `<Object>_Record_Page_<Variant>` | `Case_Record_Page_Support` |
-| Trigger | `<Object>Trigger` | `CaseTrigger` |
-| Trigger Handler | `<Object>TriggerHandler` | `CaseTriggerHandler` |
+| Trigger / Handler | `<Object>Trigger`, `<Object>TriggerHandler` | `CaseTrigger`, `CaseTriggerHandler` |
 
 ---
 
-## 14. Descriptions and Help Text
+## 13. Deployment Order
 
-### Rule: All Metadata MUST Have Descriptions
+Deploy metadata in this order. Each row depends on the rows above it. Group into deployment waves.
 
-This is non-negotiable for maintainable orgs. Undocumented metadata becomes toxic debt — future developers cannot understand purpose, owner, or safe modification scope.
-
-### Object Description Requirements
-
-Every custom object must have a description containing:
-- **Team/owner**: Which team owns this object.
-- **Purpose**: What this object stores and why.
-- **Created date**: When it was introduced.
-- **OWD explanation**: Why the sharing model was chosen.
-
-```
-Support Ticket object for tracking customer-reported issues.
-Owner: Support Engineering team.
-Created: April 2026.
-OWD: Private — agents see only assigned tickets; sharing rules open access to team leads.
-```
-
-### Field Help Text Requirements
-
-Help text is shown in the UI as a tooltip when the user hovers over the field info icon. Write it for the user, not the developer:
-
-- Good: `"Enter a brief description of the issue the customer is reporting. This appears in the customer-facing acknowledgement email."`
-- Bad: `"Subject field for case"`
-- Bad: (empty)
-
-### Field Description Requirements
-
-The description is the technical note — write it for the developer:
-
-- What the field is used for technically.
-- Any integration dependencies (e.g., "Populated by the CRM Sync process — do not modify manually").
-- Bypass notes (e.g., "Validation rule VR_Case_SubjectRequired enforces this field; bypass via BypassCaseValidation custom permission").
-
-### Auditability
-
-In Salesforce implementations, field descriptions and help texts are **auditable documentation**. During security reviews, compliance audits, or handovers, the metadata description is the first place an auditor looks. Treat it as official documentation.
-
----
-
-## 15. Deployment Order
-
-### Critical Deployment Order Table
-
-Deploy metadata in this order to avoid dependency failures:
-
-| Step | Metadata Type | Notes |
+| # | Metadata | Notes |
 |---|---|---|
-| 1 | Custom Objects | Base objects before fields |
-| 2 | Custom Fields | On all objects (standard + custom) |
-| 3 | Global Value Sets | Before picklist fields that reference them |
-| 4 | Record Types | After fields (picklist fields must exist) |
-| 5 | Page Layouts | After record types |
-| 6 | Compact Layouts | After fields |
-| 7 | Validation Rules | After Custom Permissions exist |
-| 8 | Custom Permissions | Before permission sets that use them |
-| 9 | Custom Metadata Types | Object definition before records |
-| 10 | Custom Metadata Records | After CMDT object exists |
-| 11 | Email Templates | After Email Folders |
-| 12 | Flows | After fields, objects, Apex classes used in flows |
-| 13 | Apex Classes | After objects/fields they reference |
-| 14 | Apex Triggers | After handler classes |
+| 1 | Custom Objects | Base before fields |
+| 2 | Global Value Sets | Before picklists that reference them |
+| 3 | Custom Fields | All fields on standard + custom objects |
+| 4 | Record Types | After picklist fields exist |
+| 5 | Compact Layouts | After fields |
+| 6 | Page Layouts | After record types |
+| 7 | Custom Permissions | Before validation rules and permission sets that reference them |
+| 8 | Validation Rules | After Custom Permissions |
+| 9 | CMDT object definitions | Before CMDT records |
+| 10 | CMDT records | After object definitions |
+| 11 | Apex Classes | After objects/fields they reference |
+| 12 | Apex Triggers | After handler classes |
+| 13 | Flows | After fields, objects, Apex used in flows |
+| 14 | Email Templates | After Email Folders |
 | 15 | Permission Sets | After objects, fields, Apex, Flows |
-| 16 | Permission Set Groups | After all component Permission Sets |
-| 17 | FlexiPages | After LWC components and Flows |
-| 18 | Assignment Rules / Auto Response Rules | After fields they filter on |
+| 16 | Permission Set Groups | After component Permission Sets |
+| 17 | FlexiPages | After LWCs and Flows |
+| 18 | Custom Tabs | After object definitions |
+| 19 | Assignment / Auto-Response Rules | After filter fields |
 
-### Dependency Failure Prevention
+### Wave practice
 
-Before deploying a batch of metadata:
-1. Sort the items by the order table above.
-2. Group into logical deployment waves.
-3. Run `--dry-run` (check-only) on each wave before deploying for real.
-4. Confirm no deployment errors before proceeding to the next wave.
+1. Sort the change list by this table.
+2. Group into 2-4 logical waves.
+3. Run `--dry-run` on each wave.
+4. Deploy real only after zero component errors.
 
 ---
 
-## 16. Common AI Mistakes to Avoid
+## 14. Descriptions and Help Text — Non-Negotiable
+
+Every metadata component this project produces MUST have:
+
+- **`<description>`** — technical notes for developers/auditors: purpose, owner, integration dependencies, bypass mechanisms, created date.
+- **`<inlineHelpText>`** (fields only) — user-facing tooltip; actionable; written for the end user, not the developer.
+
+Undocumented metadata is toxic debt. Auditors read descriptions first during compliance reviews. Treat them as official documentation.
+
+| Layer | Audience | Example |
+|---|---|---|
+| Object `<description>` | Developer + auditor | `"Support Ticket. Owner: Support Eng. Created 2026-05. OWD Private — agents see only assigned tickets."` |
+| Field `<description>` | Developer | `"Populated by CRM Sync job. Do not modify manually. Bypass via BypassCaseValidation."` |
+| Field `<inlineHelpText>` | End user | `"Enter a brief summary of the issue the customer is reporting. Appears in the customer-facing acknowledgement email."` |
+| Validation Rule `<description>` | Developer + admin | `"Blocks save when Subject is blank. Bypass: BypassCaseValidation. Owner: Support."` |
+
+---
+
+## 15. Validation Commands
+
+```bash
+# Retrieve one custom object
+sf project retrieve start --metadata "CustomObject:SupportTicket__c" --target-org PlusGradeFullSB
+
+# Retrieve CMDT object + records
+sf project retrieve start --metadata "CustomObject:CMDT_Integration__mdt" --metadata "CustomMetadata" --target-org PlusGradeFullSB
+
+# Dry-run deploy — REQUIRED before real deploy
+sf project deploy start --source-dir force-app/main/default/objects --dry-run --target-org PlusGradeFullSB
+
+# Real deploy
+sf project deploy start --source-dir force-app/main/default/objects --target-org PlusGradeFullSB
+
+# Inventory custom objects
+sf data query --query "SELECT QualifiedApiName, Label, Description FROM EntityDefinition WHERE IsCustomizable = true ORDER BY QualifiedApiName" --target-org PlusGradeFullSB
+
+# Inventory fields on Case
+sf data query --query "SELECT QualifiedApiName, Label, DataType, Description, InlineHelpText FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = 'Case' ORDER BY QualifiedApiName" --target-org PlusGradeFullSB
+
+# List record types / validation rules
+sf data query --query "SELECT Id, Name, DeveloperName, SobjectType, IsActive FROM RecordType ORDER BY SobjectType, DeveloperName" --target-org PlusGradeFullSB
+sf data query --query "SELECT Id, ValidationName, Active, Description, EntityDefinition.QualifiedApiName FROM ValidationRule ORDER BY EntityDefinition.QualifiedApiName, ValidationName" --target-org PlusGradeFullSB
+```
+
+---
+
+## 16. Definition of Done
+
+Metadata work is complete when all of the following hold:
+
+- [ ] Every custom object has `<label>`, `<pluralLabel>`, `<description>` with owner + date + OWD rationale, explicit `<sharingModel>`, `<deploymentStatus>Deployed</deploymentStatus>`, `<visibility>Public</visibility>`.
+- [ ] Every custom field has `<label>` (Title Case), `<description>` (technical), `<inlineHelpText>` (user-facing), correct `<type>`.
+- [ ] Master-Detail fields contain NO `<required>`, `<deleteConstraint>`, or `<lookupFilter>`; parent object's `<sharingModel>` is `ControlledByParent` if it holds an M-D.
+- [ ] Roll-Up Summary fields contain NO `<precision>`, `<scale>`, `<required>`, `<length>`; `<summaryForeignKey>` and `<summarizedField>` use `Object__c.Field__c` format.
+- [ ] Formula fields use the **result data type** as `<type>` (not `Formula`); `<formula>` wrapped in `<![CDATA[]]>`; `<formulaTreatBlanksAs>` set correctly.
+- [ ] All field API names are PascalCase, no temp/abbreviation names, no reserved keywords.
+- [ ] Validation Rules named `VR_<Object>_<Intent>` (no `__c` suffix); include `<![CDATA[]]>` around the formula; include Custom Permission bypass; deploy AFTER the Custom Permission.
+- [ ] CMDT used for new configuration data; Apex reads via `getInstance()` / `getAll().values()`, not SOQL, in hot paths; no credentials in CMDT.
+- [ ] Record Types created only when business processes genuinely differ; no hardcoded Record Type IDs anywhere; references go through `getRecordTypeInfosByDeveloperName()` or CMDT.
+- [ ] Custom Tabs follow the strict element allowlist; motif is contextually unique per tab.
+- [ ] Compact layouts defined for every user-facing custom object.
+- [ ] External ID fields marked on integration keys; `<unique>true</unique>` where the value identifies a record.
+- [ ] FLS settings declared on Permission Sets in the same deployment wave as the new field; no relying on Profile-level FLS.
+- [ ] Deployment order follows Section 13; each wave passed `--dry-run` with zero component errors before real deploy.
+- [ ] Every metadata file has a meaningful `<description>` — no exceptions.
+
+---
+
+## 17. Common AI Mistakes to Avoid
 
 | Mistake | Why It's Wrong | Correct Approach |
 |---|---|---|
@@ -843,93 +819,35 @@ Before deploying a batch of metadata:
 
 ---
 
-## 17. Definition of Done
+## 18. Empirical Findings & Implementation Notes
 
-Metadata is considered complete and deployable when ALL of the following are true:
+When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
 
-- [ ] All custom objects have: label, plural label, description with owner and created date, chosen OWD
-- [ ] All custom fields have: label, help text (user-facing), description (technical notes), correct data type
-- [ ] All field names follow PascalCase convention; no temp or abbreviation names
-- [ ] Record Types created only where materially different business processes exist; DeveloperNames are stable
-- [ ] All Validation Rules named `VR_<Object>_<Intent>`; include Custom Permission bypass; user-friendly error messages
-- [ ] CMDT used for all configuration data; no credentials stored in CMDT
-- [ ] No hardcoded Record Type IDs anywhere in code or flows; all references use DeveloperName
-- [ ] Deployment order documented and follows the Section 15 table
-- [ ] Compact layouts defined for all custom objects
-- [ ] Global Value Sets documented with list of dependent fields
-- [ ] External IDs marked on integration key fields; `Unique` constraint applied
-- [ ] `--dry-run` (check-only) deploy passed before actual deployment
+*(No entries yet — append as encountered.)*
 
----
-
-## 18. Validation Commands
-
-```bash
-# Retrieve custom object metadata
-sf project retrieve start \
-  --metadata "CustomObject:SupportTicket__c" \
-  --target-org <alias>
-
-# Retrieve all custom objects
-sf project retrieve start \
-  --metadata "CustomObject" \
-  --target-org <alias>
-
-# Retrieve validation rules for an object
-sf project retrieve start \
-  --metadata "ValidationRule" \
-  --target-org <alias>
-
-# Retrieve CMDT object and records
-sf project retrieve start \
-  --metadata "CustomObject:CMDT_Integration__mdt" \
-  --metadata "CustomMetadata" \
-  --target-org <alias>
-
-# Deploy check-only (validate before real deploy)
-sf project deploy start \
-  --source-dir force-app/main/default/objects \
-  --dry-run \
-  --target-org <alias>
-
-# Deploy real
-sf project deploy start \
-  --source-dir force-app/main/default/objects \
-  --target-org <alias>
-
-# Query custom objects in org
-sf data query \
-  --query "SELECT QualifiedApiName, Label, Description FROM EntityDefinition WHERE IsCustomizable = true ORDER BY QualifiedApiName" \
-  --target-org <alias>
-
-# Query fields on an object
-sf data query \
-  --query "SELECT QualifiedApiName, Label, DataType, Description, InlineHelpText FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = 'Case' ORDER BY QualifiedApiName" \
-  --target-org <alias>
-
-# Query record types
-sf data query \
-  --query "SELECT Id, Name, DeveloperName, SobjectType, IsActive FROM RecordType ORDER BY SobjectType, DeveloperName" \
-  --target-org <alias>
-
-# Query validation rules
-sf data query \
-  --query "SELECT Id, ValidationName, Active, Description, EntityDefinition.QualifiedApiName FROM ValidationRule ORDER BY EntityDefinition.QualifiedApiName, ValidationName" \
-  --target-org <alias>
-```
+| # | Date | Documented approach | What actually works | Why / Context |
+|---|---|---|---|---|
 
 ---
 
 ## 19. Official References
 
 - Salesforce Metadata API: [CustomObject](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_customobject.htm)
-- Salesforce Metadata API: [CustomField](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_field_types.htm)
+- Salesforce Metadata API: [CustomField — field types](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_field_types.htm)
+- Salesforce Metadata API: [ValidationRule](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_validationformulas.htm)
+- Salesforce Metadata API: [CustomTab](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_customtab.htm)
 - Salesforce Help: [Record Types](https://help.salesforce.com/s/articleView?id=sf.customize_recordtype.htm)
 - Salesforce Help: [Custom Metadata Types](https://help.salesforce.com/s/articleView?id=sf.custommetadatatypes_overview.htm)
+- Salesforce Apex Reference: [Custom Metadata Types in Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_class_custom_metadata.htm)
 - Salesforce Help: [Custom Settings](https://help.salesforce.com/s/articleView?id=sf.cs_about.htm)
 - Salesforce Help: [Validation Rules](https://help.salesforce.com/s/articleView?id=sf.fields_about_field_validation.htm)
 - Salesforce Help: [Global Value Sets](https://help.salesforce.com/s/articleView?id=sf.fields_global_picklists.htm)
 - Salesforce Help: [External IDs](https://help.salesforce.com/s/articleView?id=sf.faq_import_general_what_is_an_external.htm)
 - Salesforce Developer Docs: [Query and Search Optimization](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/langCon_apex_SOQL_VLSQ.htm)
 - Salesforce Well-Architected: [Data Management](https://architect.salesforce.com/well-architected/adaptable/data)
-- Trailhead: [Data Modeling](https://trailhead.salesforce.com/content/learn/modules/data_modeling)
+- forcedotcom/sf-skills: [generating-custom-object](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-object) · [generating-custom-field](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-field) · [generating-validation-rule](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-validation-rule) · [generating-custom-tab](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-tab) · [generating-custom-lightning-type](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-custom-lightning-type)
+- Cross-references in this skill library: `flexipage_guidelines.md` (Lightning Record Pages / Dynamic Forms), `permission_set_guidelines.md` (FLS + CRUD), `integration_guidelines.md` (Named Credentials, callouts), `apex_guidelines.md` (CMDT access patterns, FLS-aware SOQL)
+
+---
+
+*Metadata Design Guidelines | v3.0 | Last verified 2026-05-16*

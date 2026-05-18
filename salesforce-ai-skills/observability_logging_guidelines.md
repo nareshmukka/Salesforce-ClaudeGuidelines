@@ -1,1120 +1,529 @@
 # Observability & Logging Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Standalone guidelines for Salesforce observability, structured logging, error alerting, and operational visibility. Attach when implementing logging, error handling, or monitoring for any Salesforce component.
+Authoritative rules for logging, error tracing, and operational visibility across Apex, Flow, LWC, and integrations in the Plusgrade PlusGradeFullSB org.
+
+**Verified against:** the deployed `AppLogger.cls` and `AppLoggerTest.cls` in `force-app/main/default/classes/`, the `Agent_Activity_Log__c` schema in `force-app/main/default/objects/`, [forcedotcom/sf-skills `debugging-apex-logs`](https://github.com/forcedotcom/sf-skills/tree/main/skills/debugging-apex-logs), [Apex Developer Guide — Debug Log](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_debugging_debug_log.htm), [System.Logger class](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_class_System_Logger.htm), [Platform Events](https://developer.salesforce.com/docs/atlas.en-us.platform_events.meta/platform_events/), [Real-Time Event Monitoring](https://help.salesforce.com/s/articleView?id=sf.real_time_event_monitoring_overview.htm). Last verified 2026-05-16.
+
+> **Project reality check (read this first).** The deployed `AppLogger` in this org is a **single-method shim** that writes to the existing `Agent_Activity_Log__c` custom object. It is NOT the multi-method `AppLog__c` design that earlier drafts of this file imagined. Match the deployed signature: `AppLogger.log(context, AppLogger.Severity, message, recordId)`. If a future task requires a richer logger, expand the shim — do not invent calls (`AppLogger.info`, `AppLogger.error(... Exception)`, `AppLogger.generateCorrelationId`) that don't exist.
 
 ---
 
-## Table of Contents
+## 1. Core Principles
 
-1. [Required Agent Output Contract](#required-agent-output-contract)
-2. [Logging Principles](#logging-principles)
-3. [Custom Log Object Design](#custom-log-object-design)
-4. [AppLogger Apex Class](#applogger-apex-class)
-5. [Platform Events for Log Distribution](#platform-events-for-log-distribution)
-6. [Flow Fault Logging — LogError_Subflow](#flow-fault-logging--logerror_subflow)
-7. [Integration Error Logging](#integration-error-logging)
-8. [Correlation IDs](#correlation-ids)
-9. [Async Job IDs](#async-job-ids)
-10. [Safe Logging — What NOT to Log](#safe-logging--what-not-to-log)
-11. [Logging in Async Contexts](#logging-in-async-contexts)
-12. [Dashboards and Reports](#dashboards-and-reports)
-13. [Alerting](#alerting)
-14. [AppLog__c Retention and Archival](#applogc-retention-and-archival)
-15. [Common AI Mistakes to Avoid](#common-ai-mistakes-to-avoid)
-16. [Definition of Done (Observability)](#definition-of-done-observability)
-17. [Official References](#official-references)
+These are non-negotiable. Every logging implementation MUST comply.
+
+1. **Logging never blocks business logic.** Every log insert uses `Database.insert(record, false)` (allOrNone = false). A logging failure must never bubble up. The deployed `AppLogger.log` additionally wraps the body in `try/catch` and sinks any logging-internal exception to `System.debug(LoggingLevel.ERROR, ...)`.
+2. **Every critical operation logs entry, success, and failure.** For any DML, callout, async job, or business-consequential decision, emit:
+   - **Entry** (INFO): "Starting `<operation>` for `<recordId>`"
+   - **Success** (INFO): "Completed `<operation>` for `<recordId>`"
+   - **Failure** (ERROR): "Failed `<operation>` for `<recordId>`: `<sanitized message>`"
+3. **Errors carry actionable context.** Every ERROR row needs: component (`Class.method` or flow API name), operation, related record Id, sanitized message, and timestamp. Anything less forces a re-run to gather context.
+4. **Logs are queryable records, not transient debug output.** `System.debug` is for local development. Production diagnosis needs SOQL-able rows so reports, dashboards, and alerts can find them.
+5. **Correlation IDs trace multi-step operations.** Any operation that crosses an Apex → Flow → Queueable → Batch → callout boundary must propagate a shared correlation token. Without it, cross-component tracing relies on timestamp matching — unreliable in async contexts.
+6. **No PII, no secrets, ever.** Sanitize before insert. See Section 8.
+7. **Use the right level.** Misusing levels makes alerting noisy and reports useless. See Section 2.
 
 ---
 
-## Required Agent Output Contract
+## 2. Log Levels — Semantic Definitions
 
-Every observability implementation produced by an AI agent MUST include all of the following. Do NOT omit any section.
+The deployed `AppLogger.Severity` enum exposes three values: `INFO`, `WARNING`, `ERROR`. The Apex `System.Logger` class and the Salesforce debug-log subsystem support a wider set (`DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL` plus the `FINE`/`FINER`/`FINEST` debug-log levels). Use the table below.
 
-1. **Log object design** — AppLog__c field list, OWD sharing model, and rationale
-2. **AppLogger class implementation** — full working Apex class with `without sharing` and `Database.insert(log, false)`
-3. **Correlation ID strategy** — how correlation IDs are generated and passed across components
-4. **Flow fault logging (LogError_Subflow)** — full autolaunched flow design with input variables and fault path
-5. **Integration error logging** — how integration HTTP errors are captured with status code, duration, and correlation ID
-6. **Alert trigger definition** — what conditions trigger alerts and how alerts are delivered
-7. **Dashboard/report plan** — which AppLog__c reports and dashboard components will be built
+| Level | When to use | Persisted by `AppLogger` | Debug log only |
+|---|---|:-:|:-:|
+| `DEBUG` | Fine-grained diagnostic detail. Not for production logging. | | ✓ |
+| `INFO` | Normal operational milestone — start, completion, key decision | ✓ (`Status__c = Success`) | ✓ |
+| `WARNING` / `WARN` | Unexpected condition that was handled; investigate later | ✓ (`Status__c = Success`) | ✓ |
+| `ERROR` | A handled failure; populates `Error__c`; requires investigation | ✓ (`Status__c = Error`) | ✓ |
+| `FATAL` | Critical failure with potential corruption or data loss. Currently maps to `ERROR` in the deployed shim until a `FATAL` severity is added. | maps to ERROR | ✓ |
 
-Failure to include all seven items is a non-compliant observability implementation.
-
----
-
-## Logging Principles
-
-These principles are non-negotiable. Every logging implementation MUST comply with all of them.
-
-### Core Principles
-
-**1. Logs MUST support diagnosis without exposing secrets or PII**
-Logs exist to help engineers diagnose problems. They must contain enough context to understand what happened without containing sensitive user data, credentials, or personal information.
-
-**2. Logging MUST NEVER block business logic**
-Use `Database.insert(log, false)` (allOrNone = false) at all times. If the log insert fails for any reason (governor limits, validation errors, connectivity), the parent transaction must continue. A logging failure must never cause a business transaction to fail.
-
-**3. Every critical operation MUST log: start, success, and failure**
-For any operation that has business consequence (DML, callout, async job, complex decision), log at:
-- Entry point (INFO): "Starting [operation] for record [id]"
-- Success path (INFO): "Completed [operation] successfully for record [id]"
-- Failure path (ERROR): "Failed [operation] for record [id]: [sanitized error message]"
-
-**4. Errors MUST include: component name, operation, related record ID, error message, and timestamp**
-All five elements are required for an error log to be actionable. An error log missing any of these requires an engineer to re-run the scenario to gather the missing context, which delays resolution.
-
-**5. Logs MUST include a correlation ID to trace multi-step operations**
-Any operation that spans multiple Apex executions, flows, or async jobs must use a shared correlation ID. Without it, tracing a failure across component boundaries requires matching timestamps, which is unreliable.
-
-**6. Log levels MUST be used correctly**
-- `DEBUG`: Fine-grained diagnostic information — not for production by default
-- `INFO`: Normal operational events — significant milestones without errors
-- `WARN`: An unexpected condition that was handled — may require investigation
-- `ERROR`: A failure that was caught and handled — requires investigation
-- `FATAL`: A critical failure that may have caused data corruption or unavailability — requires immediate response
-
-**7. Logs must be queryable**
-AppLog__c is a standard Salesforce custom object. Logs are written as records so they can be queried with SOQL, reported on, and used in dashboards. This is superior to System.debug() which is transient and not searchable.
+`WARNING` and `INFO` both serialize to `Status__c = 'Success'` in the deployed schema. The severity prefix in `Agent_Comments__c` (`[WARNING] ...` vs `[INFO] ...`) is what reports filter on.
 
 ---
 
-## Custom Log Object Design
+## 3. The Deployed Logger — `AppLogger` Contract
 
-### AppLog__c Object Configuration
+**File:** `force-app/main/default/classes/AppLogger.cls`
+**Sharing:** `without sharing` — logging must succeed regardless of running-user record access.
+**Failure mode:** internal `try/catch`; logging-internal errors are swallowed to `System.debug`.
 
-**Object API Name**: `AppLog__c`
-**Object Label**: `App Log`
-**Plural Label**: `App Logs`
-**OWD (Organization-Wide Default)**: Private
-**Reason for Private OWD**: Log records may contain error details, stack traces, and system operation context that should not be visible to regular users. Only system administrators and operations personnel should have access.
-**Apex Logger**: writes using `without sharing` (system-level write, bypasses OWD for insert)
-
-### Field Design
-
-| Field API Name | Field Type | Length / Options | Purpose |
-|---|---|---|---|
-| `Level__c` | Picklist | DEBUG, INFO, WARN, ERROR, FATAL | Log severity level |
-| `Component__c` | Text | 255 | Apex class.method name or Flow API name |
-| `Operation__c` | Text | 255 | Human-readable description of what was attempted |
-| `RelatedRecordId__c` | Text | 18 | Salesforce record ID of the primary record involved |
-| `CorrelationId__c` | Text | 255 | Shared ID for tracing a multi-step operation |
-| `AsyncJobId__c` | Text | 18 | Queueable or Batch Apex job ID |
-| `Message__c` | LongTextArea | 131072 | Error message or informational description (sanitized) |
-| `StackTrace__c` | LongTextArea | 131072 | Exception stack trace string |
-| `IntegrationSystem__c` | Text | 255 | External system name for integration logs |
-| `Direction__c` | Picklist | Inbound, Outbound | Integration traffic direction |
-| `StatusCode__c` | Number | 3, 0 | HTTP response status code |
-| `DurationMs__c` | Number | 10, 0 | Execution or callout duration in milliseconds |
-| `UserId__c` | Text | 18 | Running user ID (populated automatically in AppLogger) |
-| `TransactionId__c` | Text | 255 | Salesforce transaction ID for correlating with debug logs |
-
-### Standard Fields to Enable
-
-- **CreatedDate**: automatically set — the primary timestamp for all log queries
-- **Name**: auto-number field (e.g., `LOG-{00000}`) for unique log identification
-- Enable **Field History Tracking** on Level__c only (to detect if logs are being modified)
-- Enable **Search Layout** so administrators can search logs from global search
-
-### AppLog__c Metadata XML
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">
-    <deploymentStatus>Deployed</deploymentStatus>
-    <enableActivities>false</enableActivities>
-    <enableBulkApi>true</enableBulkApi>
-    <enableFeeds>false</enableFeeds>
-    <enableHistory>false</enableHistory>
-    <enableReports>true</enableReports>
-    <enableSearch>true</enableSearch>
-    <enableSharing>true</enableSharing>
-    <label>App Log</label>
-    <nameField>
-        <displayFormat>LOG-{00000000}</displayFormat>
-        <label>Log Number</label>
-        <type>AutoNumber</type>
-    </nameField>
-    <pluralLabel>App Logs</pluralLabel>
-    <sharingModel>Private</sharingModel>
-</CustomObject>
-```
-
----
-
-## AppLogger Apex Class
-
-### Design Requirements
-
-- Class modifier: `public without sharing` — logging must work regardless of the running user's record access
-- All insert operations: `Database.insert(log, false)` — allOrNone = false ensures log failure never blocks business logic
-- PII sanitization in the `sanitize()` method — no raw user data in messages
-- All public methods are static — no instantiation needed, call from anywhere
-- Overloaded signatures for common call patterns — reduce boilerplate in calling code
-
-### Full Implementation
+### Public surface (the ONLY public method)
 
 ```apex
-/**
- * Description: Centralized logging helper for Apex, integrations, and async jobs.
- *              Writes structured log records to AppLog__c for diagnosis and monitoring.
- *              All inserts use allOrNone=false to never block business logic on log failure.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- * Version: 2.0 (April 2026)
- */
-public without sharing class AppLogger {
+public static void log(String context, Severity sevLevel, String message, Id recordId);
 
-    // =========================================================
-    // PUBLIC API — INFO
-    // =========================================================
-
-    /**
-     * Log an informational event (no error).
-     * Use for significant operational milestones: start, completion, key decisions.
-     */
-    public static void info(String component, String operation, String message) {
-        log('INFO', component, operation, null, null, null, message, null);
-    }
-
-    /**
-     * Log an informational event with a related record ID.
-     */
-    public static void info(String component, String operation, Id relatedRecordId, String message) {
-        log('INFO', component, operation, null, null, relatedRecordId, message, null);
-    }
-
-    /**
-     * Log an informational event with correlation ID and related record ID.
-     */
-    public static void info(String component, String correlationId, String operation, Id relatedRecordId, String message) {
-        log('INFO', component, operation, correlationId, null, relatedRecordId, message, null);
-    }
-
-    // =========================================================
-    // PUBLIC API — WARN
-    // =========================================================
-
-    /**
-     * Log a warning: an unexpected condition that was handled but may require investigation.
-     */
-    public static void warn(String component, String operation, String message) {
-        log('WARN', component, operation, null, null, null, message, null);
-    }
-
-    /**
-     * Log a warning with correlation ID.
-     */
-    public static void warn(String component, String correlationId, String operation, String message) {
-        log('WARN', component, operation, correlationId, null, null, message, null);
-    }
-
-    // =========================================================
-    // PUBLIC API — ERROR
-    // =========================================================
-
-    /**
-     * Log an error with a plain message string.
-     * Use when you have the error message but not an exception object.
-     */
-    public static void error(String component, String correlationId, String operation, String message) {
-        log('ERROR', component, operation, correlationId, null, null, message, null);
-    }
-
-    /**
-     * Log an error from a caught Exception object.
-     * Captures both the message and stack trace automatically.
-     */
-    public static void error(String component, String correlationId, String operation, Exception e) {
-        log('ERROR', component, operation, correlationId, null, null, e.getMessage(), e.getStackTraceString());
-    }
-
-    /**
-     * Log an error from a caught Exception with a related record ID.
-     */
-    public static void error(String component, String correlationId, String operation, Id relatedRecordId, Exception e) {
-        log('ERROR', component, operation, correlationId, null, relatedRecordId, e.getMessage(), e.getStackTraceString());
-    }
-
-    /**
-     * Log an error with full context: correlation ID, related record ID, message.
-     */
-    public static void error(String component, String correlationId, String operation, Id relatedRecordId, String message) {
-        log('ERROR', component, operation, correlationId, null, relatedRecordId, message, null);
-    }
-
-    // =========================================================
-    // PUBLIC API — FATAL
-    // =========================================================
-
-    /**
-     * Log a FATAL event: critical failure requiring immediate response.
-     * Always generates an alert when alerting is configured.
-     */
-    public static void fatal(String component, String correlationId, String operation, Exception e) {
-        log('FATAL', component, operation, correlationId, null, null, e.getMessage(), e.getStackTraceString());
-    }
-
-    // =========================================================
-    // PUBLIC API — INTEGRATION
-    // =========================================================
-
-    /**
-     * Log an integration callout result (inbound or outbound).
-     * Automatically sets level to ERROR if statusCode >= 400.
-     *
-     * @param system           External system name (e.g., 'ExternalCaseAPI')
-     * @param direction        'Inbound' or 'Outbound'
-     * @param statusCode       HTTP status code (null if request never sent)
-     * @param durationMs       Callout duration in milliseconds
-     * @param correlationId    Correlation ID for trace
-     * @param message          Success message or error detail
-     */
-    public static void integration(
-        String system,
-        String direction,
-        Integer statusCode,
-        Long durationMs,
-        String correlationId,
-        String message
-    ) {
-        String level = (statusCode != null && statusCode >= 400) ? 'ERROR' : 'INFO';
-
-        AppLog__c logRecord = new AppLog__c(
-            Level__c              = level,
-            Component__c          = 'Integration.' + system,
-            Operation__c          = system + ' ' + direction,
-            IntegrationSystem__c  = system,
-            Direction__c          = direction,
-            StatusCode__c         = statusCode,
-            DurationMs__c         = durationMs,
-            CorrelationId__c      = correlationId,
-            Message__c            = sanitize(message),
-            UserId__c             = String.valueOf(UserInfo.getUserId()),
-            TransactionId__c      = Request.getCurrent().getRequestId()
-        );
-        Database.insert(logRecord, false); // never block business logic
-    }
-
-    // =========================================================
-    // PUBLIC API — ASYNC
-    // =========================================================
-
-    /**
-     * Log an async job event (Queueable or Batch) with its job ID.
-     */
-    public static void async(String component, String operation, String asyncJobId, String correlationId, String message) {
-        AppLog__c logRecord = new AppLog__c(
-            Level__c         = 'INFO',
-            Component__c     = component,
-            Operation__c     = operation,
-            AsyncJobId__c    = asyncJobId,
-            CorrelationId__c = correlationId,
-            Message__c       = sanitize(message),
-            UserId__c        = String.valueOf(UserInfo.getUserId()),
-            TransactionId__c = Request.getCurrent().getRequestId()
-        );
-        Database.insert(logRecord, false);
-    }
-
-    /**
-     * Log an async job error with its job ID.
-     */
-    public static void asyncError(String component, String operation, String asyncJobId, String correlationId, Exception e) {
-        AppLog__c logRecord = new AppLog__c(
-            Level__c         = 'ERROR',
-            Component__c     = component,
-            Operation__c     = operation,
-            AsyncJobId__c    = asyncJobId,
-            CorrelationId__c = correlationId,
-            Message__c       = sanitize(e.getMessage()),
-            StackTrace__c    = e.getStackTraceString(),
-            UserId__c        = String.valueOf(UserInfo.getUserId()),
-            TransactionId__c = Request.getCurrent().getRequestId()
-        );
-        Database.insert(logRecord, false);
-    }
-
-    // =========================================================
-    // PRIVATE CORE LOG METHOD
-    // =========================================================
-
-    private static void log(
-        String level,
-        String component,
-        String operation,
-        String correlationId,
-        String asyncJobId,
-        Id relatedRecordId,
-        String message,
-        String stackTrace
-    ) {
-        AppLog__c logRecord = new AppLog__c(
-            Level__c             = level,
-            Component__c         = component,
-            Operation__c         = operation,
-            CorrelationId__c     = correlationId,
-            AsyncJobId__c        = asyncJobId,
-            RelatedRecordId__c   = relatedRecordId != null ? String.valueOf(relatedRecordId) : null,
-            Message__c           = sanitize(message),
-            StackTrace__c        = stackTrace,
-            UserId__c            = String.valueOf(UserInfo.getUserId()),
-            TransactionId__c     = Request.getCurrent().getRequestId()
-        );
-        Database.insert(logRecord, false); // allOrNone=false: logging NEVER fails the transaction
-    }
-
-    // =========================================================
-    // CORRELATION ID GENERATOR
-    // =========================================================
-
-    /**
-     * Generate a correlation ID for tracing a multi-step operation.
-     * Call at the entry point of an operation and pass to all subsequent calls.
-     * Format: <userId-prefix>-<timestamp-millis>
-     */
-    public static String generateCorrelationId() {
-        String userPrefix = String.valueOf(UserInfo.getUserId()).substring(0, 15);
-        return userPrefix + '-' + String.valueOf(System.currentTimeMillis());
-    }
-
-    // =========================================================
-    // PII SANITIZATION
-    // =========================================================
-
-    /**
-     * Remove known PII patterns from log message strings.
-     * Extend this method per your organization's data classification policy.
-     * IMPORTANT: This is a baseline — review and extend for your data model.
-     */
-    private static String sanitize(String input) {
-        if (input == null) return null;
-        if (input.length() > 32000) {
-            // Truncate to prevent LongTextArea overflow
-            input = input.substring(0, 32000) + '... [TRUNCATED]';
-        }
-        return input
-            // Credit card numbers (16 digits, with or without spaces/dashes)
-            .replaceAll('[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}', '[CARD_REDACTED]')
-            // Email addresses
-            .replaceAll('[\\w._%+\\-]+@[\\w.\\-]+\\.[a-zA-Z]{2,}', '[EMAIL_REDACTED]')
-            // Social Security Numbers (US: XXX-XX-XXXX)
-            .replaceAll('[0-9]{3}-[0-9]{2}-[0-9]{4}', '[SSN_REDACTED]')
-            // Bearer tokens
-            .replaceAll('Bearer\\s+[A-Za-z0-9._\\-]+', 'Bearer [TOKEN_REDACTED]')
-            // Basic auth patterns
-            .replaceAll('password["\']?\\s*[=:]\\s*["\']?[^\\s"\'&,]+', 'password=[REDACTED]');
-    }
-}
+public enum Severity { INFO, WARNING, ERROR }
 ```
 
-### AppLogger Usage Examples
-
-```apex
-// In a service class
-public with sharing class CaseService {
-
-    public static void processInboundCase(Case c) {
-        String correlationId = AppLogger.generateCorrelationId();
-        AppLogger.info('CaseService.processInboundCase', 'ProcessInbound', c.Id, 'Processing inbound case update');
-
-        try {
-            // business logic here
-            update c;
-            AppLogger.info('CaseService.processInboundCase', correlationId, 'ProcessInbound', c.Id, 'Case updated successfully');
-        } catch (Exception e) {
-            AppLogger.error('CaseService.processInboundCase', correlationId, 'ProcessInbound', c.Id, e);
-            throw e; // re-throw after logging — don't swallow exceptions silently
-        }
-    }
-}
-```
-
----
-
-## Platform Events for Log Distribution
-
-Use a Platform Event (`AppLogEvent__e`) when logs need to be consumed externally or in near-real-time. Platform Events allow external systems (Splunk, Datadog, SIEM tools) to subscribe via Streaming API.
-
-### When to Use Platform Events for Logging
-
-- High-volume logging that would stress AppLog__c record limits
-- Real-time log streaming to an external SIEM or log aggregation tool
-- Cross-org logging (e.g., multiple sandboxes feeding a central log store)
-- When logs need to trigger external alerting without polling
-
-### AppLogEvent__e Design
-
-Create a Platform Event with the same fields as AppLog__c:
-
-| Field API Name | Type | Purpose |
+| Parameter | Required | Purpose |
 |---|---|---|
-| `Level__c` | Text(20) | Log severity |
-| `Component__c` | Text(255) | Source component |
-| `Operation__c` | Text(255) | Operation attempted |
-| `CorrelationId__c` | Text(255) | Trace correlation ID |
-| `Message__c` | LongTextArea | Log message |
-| `StatusCode__c` | Number(3,0) | HTTP status (integrations) |
+| `context` | recommended | `Class.method` form, e.g. `'GetCaseContextAction.execute'`. Null renders as `(no-context)` — avoid. |
+| `sevLevel` | recommended | `INFO`, `WARNING`, or `ERROR`. Null defaults to `INFO`. |
+| `message` | yes | Sanitized message. Never raw PII or full HTTP body. |
+| `recordId` | optional | If a Case Id, it is stamped on `Case__c` for relationship reporting. Non-Case Ids are accepted but do not populate `Case__c`. |
 
-### Publishing a Platform Event Log
+### Where logs land
+
+`AppLogger.log` inserts a row into the existing `Agent_Activity_Log__c` object with these fixed picklist values:
+
+| Field | Value |
+|---|---|
+| `Action_Name__c` | `Agent_Invocation` |
+| `AI_Tool_Name__c` | `Agent Chat` |
+| `Source__c` | `UI_Chat` |
+| `Status__c` | `Error` if severity = ERROR, else `Success` |
+| `Error__c` | message abbreviated to 5000 chars — only set on ERROR |
+| `Agent_Comments__c` | `[<SEVERITY>] <context> | <message>` abbreviated to 32000 chars |
+| `Case__c` | lookup populated only when `recordId.getSobjectType() == Case.SObjectType` |
+
+### Canonical usage
 
 ```apex
-// Publish instead of insert for external distribution
-EventBus.publish(new AppLogEvent__e(
-    Level__c         = 'ERROR',
-    Component__c     = 'CaseService.processInbound',
-    Operation__c     = 'ProcessInbound',
-    CorrelationId__c = correlationId,
-    Message__c       = sanitizedMessage
-));
+// Entry, success, failure for a critical action
+public class GetCaseContextAction {
+    @InvocableMethod(label='Get Case Context')
+    public static List<Response> execute(List<Request> reqs) {
+        Id caseId = reqs[0].caseId;
+        AppLogger.log('GetCaseContextAction.execute', AppLogger.Severity.INFO,
+            'Starting context load', caseId);
+        try {
+            // ... real work ...
+            AppLogger.log('GetCaseContextAction.execute', AppLogger.Severity.INFO,
+                'Context loaded successfully', caseId);
+            return out;
+        } catch (Exception e) {
+            AppLogger.log('GetCaseContextAction.execute', AppLogger.Severity.ERROR,
+                e.getMessage() + ' | ' + e.getStackTraceString(), caseId);
+            // re-throw or return an error response per the action's contract
+            throw e;
+        }
+    }
+}
 ```
 
-### Subscribing to Log Events
+### What the deployed shim does NOT have
 
-External systems subscribe via:
-- **Salesforce Streaming API** (CometD protocol)
-- **Change Data Capture** (if using the object approach)
-- **External integrations**: Splunk, Datadog, Elastic, AWS CloudWatch — connect via Streaming API or MuleSoft
+These are commonly imagined methods that **do not exist** in `AppLogger.cls`. Do not call them.
 
-### Hybrid Approach
+- `AppLogger.info(...)`, `AppLogger.warn(...)`, `AppLogger.error(...)`, `AppLogger.fatal(...)`
+- `AppLogger.error(component, correlationId, operation, Exception e)` — no overload accepts an `Exception` directly. Pass `e.getMessage() + ' | ' + e.getStackTraceString()` as the message.
+- `AppLogger.integration(...)`, `AppLogger.async(...)`, `AppLogger.asyncError(...)`
+- `AppLogger.generateCorrelationId()` — generate inline (see Section 5).
+- A `FATAL` severity — currently absent. Use `ERROR` until the enum is extended.
 
-For most orgs, use both:
-1. `AppLog__c` records for operational visibility (reports, dashboards, SOQL queries)
-2. `AppLogEvent__e` platform events for external streaming (only when external SIEM is available)
+If a feature genuinely needs one of these, add it to `AppLogger.cls` and update this section. Do not write code that assumes them.
+
+### Fallback when `AppLogger` is not in the target org
+
+`AppLogger` is a project-internal class, not a managed package or native API. Before referencing it in any new class, verify it exists in the target org (`sf project retrieve start --metadata ApexClass:AppLogger ...`). If absent, use Apex's built-in `System.debug` with explicit level and add a TODO:
+
+```apex
+// TODO: replace with AppLogger.log once it is deployed to this org
+System.debug(LoggingLevel.ERROR, 'GetCaseContextAction.execute | ' + e.getMessage());
+```
+
+This is mistake #11 in the table at the bottom — the most common deployment failure when porting code between orgs.
 
 ---
 
-## Flow Fault Logging — LogError_Subflow
+## 4. Built-in Apex Logging — `System.debug` and `System.Logger`
 
-Every Flow that performs DML or calls an Apex action MUST have fault paths. All fault paths should route to `LogError_Subflow` — a shared, reusable autolaunched flow that writes an AppLog__c record.
+### `System.debug`
 
-### LogError_Subflow Design
+`System.debug(LoggingLevel.ERROR, message)` writes to the transient **debug log** captured by an active trace flag for the running user. Debug logs are not records, are not queryable with SOQL, and disappear when the trace flag expires or the log is overwritten. Use `System.debug` for:
 
-**Flow Type**: Autolaunched Flow (no trigger, called as a subflow)
-**API Name**: `LogError_Subflow`
-**Description**: Reusable fault logging subflow. Called from fault paths in all record-triggered and autolaunched flows.
+- Local development and ad-hoc diagnosis under an active trace flag.
+- The `try/catch` fallback path inside logging code itself (see `AppLogger` self-failure handler).
+- Pre-`AppLogger` code paths where the persistent logger isn't yet deployed.
 
-### Input Variables
+**Always pass a `LoggingLevel`** so the message survives at the configured Apex Code debug level:
 
-| Variable API Name | Type | Required | Description |
-|---|---|---|---|
-| `input_FlowName` | Text | Yes | API name of the calling flow |
-| `input_RecordId` | Text | No | Related record ID (pass the triggering record ID) |
-| `input_ElementName` | Text | No | Name of the flow element that faulted |
-| `input_ErrorMessage` | Text | No | Fault message from the faulted element ({!$Flow.FaultMessage}) |
-
-### Flow Elements
-
-**Element 1: Create AppLog__c Record**
-- Element Type: Create Records
-- Object: AppLog__c
-- Field mappings:
-  - `Level__c` = `ERROR` (literal value)
-  - `Component__c` = `{!input_FlowName}` (Flow Name)
-  - `Operation__c` = `{!input_ElementName}` (Element that faulted)
-  - `RelatedRecordId__c` = `{!input_RecordId}` (Related record)
-  - `Message__c` = `{!input_ErrorMessage}` (Fault message)
-- **Fault path on this element**: connects to End (do NOT re-throw — logging failure must be silent)
-
-**Element 2: End**
-- The subflow ends — the calling flow's fault path is satisfied
-
-### Connecting LogError_Subflow in a Calling Flow
-
-In every calling flow element that has a fault path:
-1. Add a Subflow element pointing to `LogError_Subflow`
-2. Map input variables:
-   - `input_FlowName` = `{!$Flow.CurrentFlowApiName}` (system variable)
-   - `input_RecordId` = `{!$Record.Id}` (for record-triggered flows)
-   - `input_ElementName` = literal text of the element name
-   - `input_ErrorMessage` = `{!$Flow.FaultMessage}` (system variable)
-3. Connect the fault connector of the DML/action element to this Subflow element
-4. Connect the Subflow's connector to an End element (not a re-throw)
-
-### LogError_Subflow Metadata Pattern
-
-```xml
-<!-- Simplified representation — actual flow XML generated by Flow Builder -->
-<!-- Key fields: all DML elements have fault connectors to LogError_Subflow call -->
-<!-- LogError_Subflow itself has a fault path on its Create Records that goes to End -->
+```apex
+System.debug(LoggingLevel.ERROR, 'GetCaseContextAction: ' + e.getMessage());
+System.debug(LoggingLevel.WARN,  'Unexpected response shape: ' + payload);
+System.debug(LoggingLevel.INFO,  'Processing batch chunk size ' + scope.size());
 ```
 
-### Testing LogError_Subflow
+Apex `LoggingLevel` enum (in order of severity, broadest to narrowest): `NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `FINE`, `FINER`, `FINEST`.
 
-- Deploy LogError_Subflow to sandbox
-- Trigger a test flow that deliberately causes a fault (e.g., attempt to create a record that fails a required field validation)
-- Verify AppLog__c record is created with Level__c = 'ERROR' and the fault message populated
-- Verify the calling transaction completed (fault was handled, not re-thrown)
+### `System.Logger` (Apex)
+
+`System.Logger` is the platform's structured logger that integrates with Event Monitoring and the debug log. It exposes `debug(...)`, `info(...)`, `warn(...)`, `error(...)`, and `fatal(...)` methods. Useful for cross-org telemetry when Event Monitoring is licensed. **Not currently used in this project** — `AppLogger` is the standard. Treat `System.Logger` as a future option, not an alternative for new code today.
+
+### Debug log retention
+
+| Setting | Default | Notes |
+|---|---|---|
+| Per-log max size | 20 MB | logs truncated at the head when exceeded |
+| Org-wide log retention | 7 days | rolling — older logs purged automatically |
+| Per-user trace flag duration | up to 24 hours | renew via Setup > Debug Logs or `tooling/sobjects/TraceFlag` |
+
+Because logs are transient and capped, **never rely on debug logs as the operational audit trail.** Persist to `Agent_Activity_Log__c` via `AppLogger`.
 
 ---
 
-## Integration Error Logging
+## 5. Correlation IDs
 
-Every integration callout MUST be logged. Capture: system name, direction, status code, duration, correlation ID, and a sanitized message.
+A correlation ID is a token assigned at the entry point of a multi-step operation and propagated to every subsequent step. With it, one SOQL filter retrieves the full trace.
 
-### Integration Logging Pattern
+### Format
 
 ```apex
-/**
- * Integration callout with full observability.
- * Developer: Naresh | Senior Salesforce Developer
- */
+// Inline — no helper method on the deployed AppLogger
+String correlationId = String.valueOf(UserInfo.getUserId()).substring(0, 15)
+    + '-' + String.valueOf(System.currentTimeMillis());
+// e.g. 005Xx000001gXXX-1747400000000
+```
+
+Use the same format consistently so reports can group by token prefix.
+
+### Including the correlation ID in the log
+
+The deployed `AppLogger` does not have a dedicated correlation-id column. Include the token in the `message` argument (it lands in `Agent_Comments__c`, which is searchable):
+
+```apex
+String cid = generateCorrelationId();
+AppLogger.log('CaseService.process', AppLogger.Severity.INFO,
+    'cid=' + cid + ' Starting case processing', caseId);
+```
+
+If correlation-id traceability becomes a frequent need, add a dedicated `Correlation_Id__c` text(255) field to `Agent_Activity_Log__c` and extend the shim — document the change here.
+
+### Propagating across boundaries
+
+| Boundary | Mechanism |
+|---|---|
+| Apex → Apex | pass `correlationId` as a method parameter |
+| Apex → Queueable | constructor argument; store as instance field |
+| Apex → Batch | constructor argument; capture `ctx.getJobId()` in `start`/`execute`/`finish` |
+| Apex → Flow (Invocable) | `@InvocableVariable String correlationId` on input class |
+| Flow → Apex | output the token from the parent flow, pass to invocable |
+| Apex → External HTTP | `req.setHeader('X-Correlation-Id', correlationId);` |
+| Inbound REST | read `RestContext.request.headers.get('X-Correlation-Id')`; generate one if missing |
+
+### Async job IDs
+
+Capture the Salesforce async job ID where available — it's the primary correlation handle for batch and queueable contexts:
+
+```apex
+Id qJobId = System.enqueueJob(new CaseProcessingJob(cid));
+AppLogger.log('CaseService.enqueue', AppLogger.Severity.INFO,
+    'cid=' + cid + ' queueable=' + qJobId, caseId);
+```
+
+Inside the job, log the `BatchableContext.getJobId()` / `QueueableContext.getJobId()` for the start and finish events.
+
+---
+
+## 6. Logging in Flows — `LogError_Subflow`
+
+Every record-triggered or autolaunched flow that performs DML or invokes an Apex action MUST have a fault path that routes to a shared `LogError_Subflow`.
+
+### LogError_Subflow contract
+
+- **Type:** Autolaunched Flow (no trigger)
+- **API Name:** `LogError_Subflow`
+- **Inputs:**
+  - `input_FlowName` (Text, required) — `{!$Flow.CurrentFlowApiName}`
+  - `input_RecordId` (Text, optional) — `{!$Record.Id}`
+  - `input_ElementName` (Text, optional) — literal name of faulted element
+  - `input_ErrorMessage` (Text, optional) — `{!$Flow.FaultMessage}`
+- **Body:** one Create Records element targeting `Agent_Activity_Log__c` with:
+  - `Action_Name__c = 'Agent_Invocation'`
+  - `AI_Tool_Name__c = 'Agent Chat'`
+  - `Source__c = 'UI_Chat'`
+  - `Status__c = 'Error'`
+  - `Error__c = {!input_ErrorMessage}`
+  - `Agent_Comments__c = '[ERROR] ' + {!input_FlowName} + '.' + {!input_ElementName} + ' | ' + {!input_ErrorMessage}`
+  - `Case__c = {!input_RecordId}` (only when the calling flow is on Case; gate with a Decision)
+- **Fault path on the Create Records element:** routes to End. **Never re-throw from a logging subflow** — a logging failure must be silent.
+
+### Wiring in calling flows
+
+For every DML element and every Apex action element:
+1. Add a Subflow element pointing to `LogError_Subflow`.
+2. Map inputs as above.
+3. Connect the **fault connector** of the DML / action element to this Subflow element.
+4. From the Subflow element, connect to an End element. Do not re-trigger the failed branch.
+
+See `flow_guidelines.md` for the canonical fault-path pattern.
+
+---
+
+## 7. Integration Logging Pattern
+
+Every outbound callout MUST log: start, status code, duration, and (on failure) a sanitized message snippet.
+
+```apex
 public with sharing class ExternalCaseApiClient {
 
     private static final String SYSTEM_NAME = 'ExternalCaseAPI';
 
-    public static ExternalCaseApiResponse createCase(CasePayload payload) {
-        String correlationId = AppLogger.generateCorrelationId();
-        Long startTime       = System.currentTimeMillis();
+    public static ExternalCaseResponse createCase(CasePayload payload, Id caseId) {
+        String cid = String.valueOf(UserInfo.getUserId()).substring(0, 15)
+            + '-' + String.valueOf(System.currentTimeMillis());
+        Long t0 = System.currentTimeMillis();
 
-        AppLogger.info(
-            'ExternalCaseApiClient.createCase',
-            correlationId,
-            'CreateCase',
-            'Starting outbound case creation request'
-        );
+        AppLogger.log('ExternalCaseApiClient.createCase', AppLogger.Severity.INFO,
+            'cid=' + cid + ' starting outbound call to ' + SYSTEM_NAME, caseId);
 
         try {
             HttpRequest req = buildRequest(payload);
+            req.setHeader('X-Correlation-Id', cid);
             HttpResponse res = new Http().send(req);
-            Long duration    = System.currentTimeMillis() - startTime;
+            Long ms = System.currentTimeMillis() - t0;
 
-            AppLogger.integration(
-                SYSTEM_NAME,
-                'Outbound',
-                res.getStatusCode(),
-                duration,
-                correlationId,
-                res.getStatusCode() < 400
-                    ? 'Case created successfully'
-                    : 'Case creation failed: ' + res.getBody().abbreviate(500)
-            );
-
-            if (res.getStatusCode() >= 400) {
-                throw new IntegrationException(
-                    SYSTEM_NAME + ' returned ' + res.getStatusCode() + ': ' + res.getBody()
-                );
+            if (res.getStatusCode() < 400) {
+                AppLogger.log('ExternalCaseApiClient.createCase', AppLogger.Severity.INFO,
+                    'cid=' + cid + ' status=' + res.getStatusCode() + ' duration=' + ms + 'ms', caseId);
+                return parse(res);
+            } else {
+                AppLogger.log('ExternalCaseApiClient.createCase', AppLogger.Severity.ERROR,
+                    'cid=' + cid + ' status=' + res.getStatusCode()
+                    + ' duration=' + ms + 'ms body=' + res.getBody().abbreviate(500), caseId);
+                throw new IntegrationException(SYSTEM_NAME + ' returned ' + res.getStatusCode());
             }
-
-            return parseResponse(res);
-
-        } catch (IntegrationException e) {
-            throw e; // already logged above, re-throw for caller
-
-        } catch (Exception e) {
-            Long duration = System.currentTimeMillis() - startTime;
-            AppLogger.integration(SYSTEM_NAME, 'Outbound', null, duration, correlationId, e.getMessage());
-            throw new IntegrationException('Unexpected error calling ' + SYSTEM_NAME + ': ' + e.getMessage(), e);
-        }
-    }
-
-    private static HttpRequest buildRequest(CasePayload payload) {
-        HttpRequest req = new HttpRequest();
-        req.setEndpoint('callout:ExternalCaseAPI/cases');  // Named Credential — never hardcode endpoints
-        req.setMethod('POST');
-        req.setHeader('Content-Type', 'application/json');
-        req.setHeader('Accept', 'application/json');
-        req.setBody(JSON.serialize(payload));
-        req.setTimeout(30000);
-        return req;
-    }
-
-    private static ExternalCaseApiResponse parseResponse(HttpResponse res) {
-        return (ExternalCaseApiResponse) JSON.deserialize(res.getBody(), ExternalCaseApiResponse.class);
-    }
-
-    public class ExternalCaseApiResponse {
-        public Boolean success;
-        public String  caseId;
-        public String  errorMessage;
-    }
-}
-```
-
-### Inbound Integration Logging
-
-For REST/SOAP services exposed to external callers:
-
-```apex
-@RestResource(urlMapping='/api/v1/cases/*')
-global with sharing class CaseInboundRestService {
-
-    @HttpPost
-    global static void handlePost() {
-        String correlationId = AppLogger.generateCorrelationId();
-        Long startTime = System.currentTimeMillis();
-
-        try {
-            AppLogger.info('CaseInboundRestService', correlationId, 'HandlePost', 'Received inbound case request');
-
-            // Extract and validate payload
-            String requestBody = RestContext.request.requestBody.toString();
-            // process...
-
-            Long duration = System.currentTimeMillis() - startTime;
-            AppLogger.integration('ExternalPortal', 'Inbound', 200, duration, correlationId, 'Inbound request processed');
-
-            RestContext.response.statusCode = 200;
-
-        } catch (Exception e) {
-            Long duration = System.currentTimeMillis() - startTime;
-            AppLogger.integration('ExternalPortal', 'Inbound', 500, duration, correlationId, e.getMessage());
-            RestContext.response.statusCode = 500;
+        } catch (CalloutException e) {
+            Long ms = System.currentTimeMillis() - t0;
+            AppLogger.log('ExternalCaseApiClient.createCase', AppLogger.Severity.ERROR,
+                'cid=' + cid + ' callout-failed duration=' + ms + 'ms ' + e.getMessage(), caseId);
+            throw e;
         }
     }
 }
 ```
 
-### Integration Log Checklist
+### Integration log checklist
 
-For every integration implementation:
-- [ ] Correlation ID generated at entry point and passed through all log calls
+- [ ] Correlation ID generated at entry, passed in `X-Correlation-Id` header AND inside the log message
 - [ ] Start logged at INFO before the callout
-- [ ] Duration captured using `System.currentTimeMillis()` before and after
-- [ ] HTTP status code logged on every response
-- [ ] Error logged with status code and sanitized response body on failure
-- [ ] Named Credential used — endpoint URL never hardcoded in Apex
-- [ ] Log message for error cases does not include full response body (may contain tokens/PII) — truncate to 500 characters
+- [ ] Duration captured via `System.currentTimeMillis()` before/after
+- [ ] HTTP status code recorded on every response
+- [ ] Response body abbreviated to 500 chars on error — never log full bodies (may contain tokens or PII)
+- [ ] Endpoint configured via Named Credential — never hardcoded
+- [ ] Exception path logs and re-throws; never swallow silently
 
 ---
 
-## Correlation IDs
+## 8. Safe Logging — PII and Secret Redaction
 
-### What Is a Correlation ID
+### Never log
 
-A correlation ID is a unique string token assigned at the entry point of a multi-step operation. It is passed to every subsequent step and included in every log entry for that operation. This enables an engineer to query all log records for a single operation across multiple component boundaries using a single SOQL filter.
-
-### Without Correlation IDs
-
-Without correlation IDs, tracing a failure requires:
-- Matching log timestamps (unreliable in async contexts)
-- Searching by record ID (only works if one record is involved)
-- Guessing which log entries belong to the same operation
-
-### With Correlation IDs
-
-With correlation IDs, a single query returns the full picture:
-
-```apex
-// Query all logs for one correlation ID to see the full operation trace
-List<AppLog__c> trace = [
-    SELECT Level__c, Component__c, Operation__c, Message__c, CreatedDate
-    FROM AppLog__c
-    WHERE CorrelationId__c = '005Xx000001gXXX-1714320000000'
-    ORDER BY CreatedDate ASC
-];
-```
-
-### Correlation ID Format
-
-```apex
-// Standard format: userId-prefix + timestamp in milliseconds
-public static String generateCorrelationId() {
-    String userPrefix = String.valueOf(UserInfo.getUserId()).substring(0, 15);
-    return userPrefix + '-' + String.valueOf(System.currentTimeMillis());
-}
-
-// Alternative: UUID format (if you have a UUID utility)
-// '550e8400-e29b-41d4-a716-446655440000'
-```
-
-### Passing Correlation IDs Across Boundaries
-
-**Apex to Apex (same transaction)**
-```apex
-String correlationId = AppLogger.generateCorrelationId();
-CaseService.process(caseId, correlationId); // pass as parameter
-```
-
-**Apex to Queueable**
-```apex
-// Include correlationId in Queueable constructor
-public class CaseProcessingJob implements Queueable {
-    private String correlationId;
-    public CaseProcessingJob(String correlationId) {
-        this.correlationId = correlationId;
-    }
-    public void execute(QueueableContext ctx) {
-        AppLogger.async('CaseProcessingJob', 'Execute', String.valueOf(ctx.getJobId()), correlationId, 'Job executing');
-        // business logic...
-    }
-}
-```
-
-**Apex to External System (HTTP)**
-```apex
-// Pass correlation ID as a request header for end-to-end trace
-req.setHeader('X-Correlation-Id', correlationId);
-```
-
-**Flow to Apex (via Invocable)**
-```apex
-// Invocable method accepts correlationId as input parameter
-public class CreateTaskAction {
-    public class Input {
-        @InvocableVariable public String correlationId;
-        @InvocableVariable public Id caseId;
-    }
-    @InvocableMethod(label='Create Follow-up Task')
-    public static void execute(List<Input> inputs) {
-        for (Input i : inputs) {
-            AppLogger.info('CreateTaskAction', i.correlationId, 'CreateTask', i.caseId, 'Creating task');
-            // ...
-        }
-    }
-}
-```
-
----
-
-## Async Job IDs
-
-Batch and Queueable jobs run in separate transactions. The job ID is the primary link between the async execution context and the log records it generates.
-
-### Capturing Async Job IDs
-
-```apex
-// Queueable: capture job ID at enqueue time
-String jobId = String.valueOf(System.enqueueJob(new CaseProcessingJob(correlationId)));
-AppLogger.async('CaseService', 'EnqueueJob', jobId, correlationId, 'Queueable enqueued: ' + jobId);
-
-// Batch: capture job ID at execute time
-String batchJobId = String.valueOf(Database.executeBatch(new CaseCleanupBatch(), 200));
-AppLogger.async('CaseService', 'ExecuteBatch', batchJobId, correlationId, 'Batch started: ' + batchJobId);
-```
-
-### Logging Inside Batch Apex
-
-```apex
-public class CaseCleanupBatch implements Database.Batchable<SObject> {
-    private String correlationId;
-
-    public CaseCleanupBatch() {
-        this.correlationId = AppLogger.generateCorrelationId();
-    }
-
-    public Database.QueryLocator start(Database.BatchableContext ctx) {
-        AppLogger.async('CaseCleanupBatch', 'Start', String.valueOf(ctx.getJobId()), correlationId, 'Batch started');
-        return Database.getQueryLocator([SELECT Id FROM Case WHERE Status = 'Closed' AND CloseDate < LAST_N_DAYS:90]);
-    }
-
-    public void execute(Database.BatchableContext ctx, List<Case> scope) {
-        try {
-            // processing...
-        } catch (Exception e) {
-            AppLogger.asyncError('CaseCleanupBatch', 'Execute', String.valueOf(ctx.getJobId()), correlationId, e);
-        }
-    }
-
-    public void finish(Database.BatchableContext ctx) {
-        AppLogger.async('CaseCleanupBatch', 'Finish', String.valueOf(ctx.getJobId()), correlationId, 'Batch completed');
-    }
-}
-```
-
----
-
-## Safe Logging — What NOT to Log
-
-### NEVER Log
-
-| Category | Examples | Risk |
+| Category | Examples | Why |
 |---|---|---|
-| Authentication credentials | Passwords, API keys, OAuth tokens, JWT secrets | Credential exposure |
-| Payment card data | Full credit card numbers, CVV codes | PCI-DSS violation |
-| Government identifiers | SSN, passport numbers, national IDs | Privacy regulation violation |
-| Full request/response bodies | HTTP bodies that may contain the above | Unknown PII exposure |
-| Session tokens | JSESSIONID, Salesforce session IDs | Session hijacking |
-| Personal medical information | Diagnoses, medications, test results | HIPAA violation |
+| Authentication credentials | passwords, API keys, OAuth tokens, JWT secrets, basic-auth headers | credential exposure |
+| Payment card data | full PAN, CVV | PCI-DSS violation |
+| Government identifiers | SSN, passport, national ID | privacy regulation |
+| Full HTTP request/response bodies | anything that may contain the above | unbounded PII risk |
+| Session tokens | Salesforce session IDs, JSESSIONID | session hijacking |
+| Medical / health data | diagnoses, prescriptions, test results | HIPAA |
 
-### ALWAYS Log (Safe to Include)
+### Safe to log
 
-| Category | Examples |
-|---|---|
-| Salesforce record IDs | 005Xx000001gXXX (user/record IDs are OK) |
-| Operation names | 'CreateCase', 'UpdateStatus', 'ProcessInbound' |
-| Component names | 'CaseService.processInbound' |
-| Sanitized error messages | After running through AppLogger.sanitize() |
-| HTTP status codes | 200, 400, 401, 500 |
-| Duration values | 1423 ms |
-| Correlation IDs | Your generated ID format |
-| Job IDs | Salesforce async job IDs |
-| Timestamps | CreatedDate auto-populated on the record |
+Salesforce record Ids, operation names, component names, sanitized error messages, HTTP status codes, durations, correlation IDs, async job IDs, timestamps (auto-populated via `CreatedDate`).
 
-### Sanitization Rules
+### Inline sanitization
 
-The `sanitize()` method in AppLogger is a baseline. Extend it based on your org's data:
+The deployed `AppLogger` does NOT sanitize. Callers are responsible. Sanitize before passing into `AppLogger.log`. A baseline pattern:
 
 ```apex
-// Extend sanitize() for your organization's specific data patterns
-// Example additions:
-.replaceAll('[A-Z]{2}[0-9]{6}[A-Z]', '[PASSPORT_REDACTED]')     // Passport numbers
-.replaceAll('[0-9]{10,11}', '[PHONE_REDACTED]')                  // Phone numbers (be careful — may match IDs)
-.replaceAll('client_secret[=:][^&\\s]+', 'client_secret=[REDACTED]')  // OAuth client secrets
+private static String sanitize(String input) {
+    if (input == null) return null;
+    if (input.length() > 30000) {
+        input = input.substring(0, 30000) + '... [TRUNCATED]';
+    }
+    return input
+        .replaceAll('[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}[- ]?[0-9]{4}', '[CARD_REDACTED]')
+        .replaceAll('[\\w._%+\\-]+@[\\w.\\-]+\\.[a-zA-Z]{2,}',         '[EMAIL_REDACTED]')
+        .replaceAll('[0-9]{3}-[0-9]{2}-[0-9]{4}',                       '[SSN_REDACTED]')
+        .replaceAll('Bearer\\s+[A-Za-z0-9._\\-]+',                      'Bearer [TOKEN_REDACTED]')
+        .replaceAll('password["\\\']?\\s*[=:]\\s*["\\\']?[^\\s"\\\'&,]+', 'password=[REDACTED]');
+}
 ```
+
+If sanitization needs to be centralized, add it to `AppLogger.cls` so every caller benefits — and document the change here.
 
 ---
 
-## Logging in Async Contexts
+## 9. Structured vs Free-Text Messages
 
-### Queueable Apex
+Free-text messages are searchable but slow to aggregate. Structured `key=value` fragments inside the message let reports filter precisely.
 
-Log at three points in every Queueable:
-1. When the job is enqueued (from the calling context)
-2. At the start of `execute()` with the job ID
-3. On success and on each caught exception
+**Preferred — structured key=value:**
+
+```
+cid=005Xx000001gXXX-1747400000000 op=ProcessInbound caseId=500Xx... status=ok duration=145ms
+```
+
+**Avoid — prose:**
+
+```
+Started processing the inbound case from the queue, then it worked fine after a bit
+```
+
+Structured tokens to standardize on:
+
+| Token | Meaning |
+|---|---|
+| `cid=` | correlation ID |
+| `op=` | operation name |
+| `caseId=` / `recordId=` | related record (in addition to the `recordId` arg) |
+| `status=` | HTTP status code or business outcome |
+| `duration=` | milliseconds |
+| `count=` | record count for bulk operations |
+| `jobId=` | async job ID |
+
+---
+
+## 10. Logging in Async Contexts
+
+### Queueable
+
+```apex
+public class CaseProcessingJob implements Queueable, Database.AllowsCallouts {
+    private final String correlationId;
+    private final Id caseId;
+
+    public CaseProcessingJob(String cid, Id caseId) {
+        this.correlationId = cid;
+        this.caseId = caseId;
+    }
+
+    public void execute(QueueableContext ctx) {
+        AppLogger.log('CaseProcessingJob.execute', AppLogger.Severity.INFO,
+            'cid=' + correlationId + ' jobId=' + ctx.getJobId() + ' starting', caseId);
+        try {
+            // work
+            AppLogger.log('CaseProcessingJob.execute', AppLogger.Severity.INFO,
+                'cid=' + correlationId + ' jobId=' + ctx.getJobId() + ' success', caseId);
+        } catch (Exception e) {
+            AppLogger.log('CaseProcessingJob.execute', AppLogger.Severity.ERROR,
+                'cid=' + correlationId + ' jobId=' + ctx.getJobId()
+                + ' ' + e.getMessage() + ' | ' + e.getStackTraceString(), caseId);
+            throw e;
+        }
+    }
+}
+```
 
 ### Batch Apex
 
-Log at three points in every Batch:
-1. In `start()` with the batch job ID
-2. In `finish()` with the batch job ID and a summary
-3. In `execute()` on any exception (not on every record — that would create too many logs)
+Log at three points; **never log inside the per-record loop** (creates one row per source record, explodes governor limits):
+
+- `start()` — INFO with job ID and scope size
+- `execute()` — ERROR on any caught exception (summarized; not per-record)
+- `finish()` — INFO with job ID and a summary row count
 
 ### Scheduled Apex
 
-```apex
-public class CaseEscalationScheduler implements Schedulable {
-    public void execute(SchedulableContext ctx) {
-        String correlationId = AppLogger.generateCorrelationId();
-        AppLogger.info('CaseEscalationScheduler', correlationId, 'Execute', 'Scheduled job started');
-        try {
-            String jobId = String.valueOf(Database.executeBatch(new CaseEscalationBatch(correlationId), 200));
-            AppLogger.async('CaseEscalationScheduler', 'BatchEnqueued', jobId, correlationId, 'Batch enqueued: ' + jobId);
-        } catch (Exception e) {
-            AppLogger.error('CaseEscalationScheduler', correlationId, 'Execute', e);
-        }
-    }
-}
-```
+Log entry in `execute(SchedulableContext)`; if the scheduled job hands off to a batch, log the batch enqueue.
 
 ### Platform Event Triggers
 
-Log in Platform Event-triggered flows using LogError_Subflow on fault paths. For Apex triggers on Platform Events, use AppLogger as in standard triggers.
+Log in the Apex Platform Event trigger using `AppLogger`. For platform-event-triggered flows, route fault paths to `LogError_Subflow` as in any other flow.
 
 ---
 
-## Dashboards and Reports
+## 11. Platform Events for Cross-Org Logging
 
-### Standard Reports to Build
+Use a Platform Event (`AppLogEvent__e`) only when logs must leave the org in near-real-time — for example, fanning out to Splunk, Datadog, or a SIEM via the Streaming API.
 
-Build these reports on AppLog__c immediately after deployment. They provide baseline visibility into org health.
+| Use case | Mechanism |
+|---|---|
+| In-org operational visibility (reports, dashboards, alerts) | `Agent_Activity_Log__c` via `AppLogger.log` (current default) |
+| External SIEM / log aggregator near real-time | `EventBus.publish(new AppLogEvent__e(...))` — subscribed by external CometD client |
+| Cross-sandbox aggregation | Platform Event published to a central org's API |
 
-**Report 1: Error Hotspots (Last 7 Days)**
-- Report Type: AppLog__c
-- Filters: Level__c IN ('ERROR', 'FATAL'), CreatedDate = LAST_7_DAYS
-- Group By: Component__c
-- Summary: Count of log records
-- Sort: Descending by count
-- Purpose: Identifies the most error-prone components
+A Platform Event is fire-and-forget; subscribers may miss events if Replay IDs fall behind. **Always pair Platform Event publishing with a persistent `Agent_Activity_Log__c` row** — the platform event is the streaming projection, the record is the source of truth.
 
-**Report 2: Integration Health (Last 24 Hours)**
-- Report Type: AppLog__c
-- Filters: IntegrationSystem__c != null, CreatedDate = TODAY
-- Group By: IntegrationSystem__c, StatusCode__c
-- Summary: Count, Average DurationMs__c
-- Purpose: Monitors all external system dependencies
+### Real-Time Event Monitoring
 
-**Report 3: Flow Fault Trend (Last 30 Days)**
-- Report Type: AppLog__c
-- Filters: Component__c CONTAINS 'Flow' OR Component__c CONTAINS 'flow', Level__c = 'ERROR'
-- Group By: Component__c, CreatedDate (group by Day)
-- Chart: Line chart by day
-- Purpose: Identifies unstable flows and trends
-
-**Report 4: High-Severity Log Trend**
-- Report Type: AppLog__c
-- Filters: Level__c IN ('ERROR', 'FATAL'), CreatedDate = LAST_30_DAYS
-- Group By: Level__c, CreatedDate (by Day)
-- Chart: Stacked bar by day
-- Purpose: Tracks overall error rate over time
-
-**Report 5: Async Job Failures**
-- Report Type: AppLog__c
-- Filters: AsyncJobId__c != null, Level__c = 'ERROR', CreatedDate = LAST_7_DAYS
-- Group By: Component__c, AsyncJobId__c
-- Purpose: Identifies failing batch/queueable jobs
-
-### Standard Dashboard Components
-
-Build a single dashboard: **"Org Operational Health"** with these components:
-
-| Component | Type | Source Report |
-|---|---|---|
-| Error Rate Gauge | Gauge | ERRORs / total logs today |
-| Integration Error Count | Metric per system | Report 2 |
-| Flow Fault Trend | Line Chart | Report 3 |
-| Error Hotspot Table | Table | Report 1 |
-| FATAL Logs Today | Metric | Filtered Report 4 |
-| Async Job Failures | Table | Report 5 |
-
-### Dashboard Scheduling
-
-- Refresh the Org Operational Health dashboard daily at the start of business
-- Subscribe operations team members to email refresh notifications for high-severity spikes
-- Pin the dashboard to the Operations or IT admin app home page
+If the org has **Shield Event Monitoring** licensed, the platform emits standard events (`ApiEvent`, `LoginEvent`, `LogoutEvent`, `ReportEvent`, etc.) as Real-Time Event Monitoring events. These are a separate stream from the project's `AppLog` events and require no custom code; subscribe via CometD or stream to a SIEM. Use them for security and access-pattern monitoring — they are not a substitute for application-level operational logging.
 
 ---
 
-## Alerting
+## 12. Reports, Dashboards, Alerts
 
-Alerting closes the loop between logging and human response. Logs that are never seen provide no value.
+### Standard reports to build on `Agent_Activity_Log__c`
 
-### Alert Conditions
+| Report | Filter | Group by | Purpose |
+|---|---|---|---|
+| Error hotspots — last 7 days | `Status__c = Error` AND `CreatedDate = LAST_7_DAYS` | `Agent_Comments__c` prefix or extracted component | top noisy components |
+| Integration health — today | `Agent_Comments__c contains 'ExternalCaseAPI'` AND `CreatedDate = TODAY` | status code in message | external dep monitoring |
+| Flow fault trend — 30 days | `Agent_Comments__c contains 'Flow'` AND `Status__c = Error` | day | unstable flow detection |
+| Async job failures — 7 days | `Agent_Comments__c contains 'jobId='` AND `Status__c = Error` | day | batch/queueable health |
+
+Dashboard: **"Org Operational Health"** — error-rate gauge, integration error count, flow fault line chart, error-hotspot table, async-failure table. Refresh daily; subscribe ops team.
+
+### Alert conditions
 
 | Condition | Threshold | Urgency | Channel |
 |---|---|---|---|
-| FATAL log created | Any single FATAL | Immediate | Slack + Email |
-| ERROR logs from same Component | 3+ in 5 minutes | High | Slack |
-| Integration status code 401 or 403 | Any occurrence | Immediate | Slack + Email (auth failure = credential problem) |
-| Integration status code 500+ | 3+ in 10 minutes | High | Slack |
-| Batch Apex failure | Any FATAL in Batch context | Immediate | Email to operations team |
-| Async job error rate | >10% of batch chunks failing | High | Slack |
+| `Status__c = Error` with `Agent_Comments__c contains 'FATAL'` (once the FATAL severity exists) | any single | immediate | Slack + Email |
+| Same component ERROR count | 3+ in 5 min | high | Slack |
+| Integration 401/403 in message | any occurrence | immediate | Slack + Email |
+| Integration 5xx in message | 3+ in 10 min | high | Slack |
 
-### Alert Implementation Options
-
-**Option 1: Flow-Based Alerting (via Platform Events)**
-1. Publish `AppLogEvent__e` when creating FATAL or high-frequency ERROR logs
-2. Subscribe with a Platform Event-triggered flow
-3. Flow sends a Slack notification (custom action) or email alert
-
-**Option 2: Custom Alert Flow on AppLog__c (Record-Triggered)**
-1. Create a record-triggered flow on AppLog__c — After Save — Entry criteria: `Level__c = 'FATAL'`
-2. Flow action: Call a Notification action (Bell notification, email, or Slack via custom action)
-3. Limit: record-triggered flows on AppLog__c can create performance issues at high log volume — use Platform Events for high-volume scenarios
-
-**Option 3: AppExchange Tools**
-- Verify available options in your target org (Splunk for Salesforce, Datadog connector, custom webhook tools)
-- These tools subscribe to Platform Events or query AppLog__c via scheduled jobs
-
-### Alert Message Format
-
-Every alert must include:
-- Severity level
-- Component name
-- Operation name
-- Correlation ID (for immediate log lookup)
-- Timestamp
-- Direct link to AppLog__c record or filtered report
+Implement via record-triggered flow on `Agent_Activity_Log__c` calling a notification action, or via Platform Event subscription if alert volume is high.
 
 ---
 
-## AppLog__c Retention and Archival
+## 13. Retention
 
-### Retention Policy
-
-Log records accumulate quickly in production. Define a retention policy before going live:
-
-| Level | Recommended Retention | Rationale |
+| Severity | Retention | Rationale |
 |---|---|---|
-| DEBUG | 7 days | Short-lived diagnostic data |
-| INFO | 30 days | Operational history for one month |
-| WARN | 90 days | Warning trend analysis |
-| ERROR | 180 days | Root cause investigation window |
-| FATAL | 365 days | Compliance and post-incident review |
+| INFO / Success rows | 30 days | operational history one month back |
+| WARNING (Success status) | 90 days | warning-trend analysis |
+| ERROR | 180 days | root-cause investigation window |
+| FATAL (when introduced) | 365 days | compliance and post-incident review |
 
-### Archival Implementation
-
-```apex
-// Scheduled Apex to delete old logs
-public class AppLogCleanupBatch implements Database.Batchable<SObject> {
-
-    public Database.QueryLocator start(Database.BatchableContext ctx) {
-        // Delete DEBUG and INFO logs older than 30 days
-        Date cutoff = Date.today().addDays(-30);
-        return Database.getQueryLocator([
-            SELECT Id FROM AppLog__c
-            WHERE Level__c IN ('DEBUG', 'INFO')
-            AND CreatedDate < :cutoff
-        ]);
-    }
-
-    public void execute(Database.BatchableContext ctx, List<SObject> scope) {
-        Database.delete(scope, false); // allOrNone=false — skip records that fail (e.g., locked)
-    }
-
-    public void finish(Database.BatchableContext ctx) {
-        AppLogger.info('AppLogCleanupBatch', 'Finish', 'Log cleanup batch completed');
-    }
-}
-```
-
-Schedule this batch to run weekly during off-peak hours.
+Implement with a weekly scheduled batch that deletes by `Status__c` + `CreatedDate` cutoff using `Database.delete(scope, false)`.
 
 ---
 
-## Common AI Mistakes to Avoid
+## 14. Common AI Mistakes to Avoid
 
-1. **Using System.debug() as a production logging strategy** — debug logs are transient, not stored as records, not searchable, and not available to operations teams. They provide no operational observability.
-
-2. **Logging PII or secrets** — raw email addresses, credit card numbers, API tokens, or full HTTP response bodies in log messages. Always run messages through `sanitize()`.
-
-3. **Using `insert log;` instead of `Database.insert(log, false)`** — if the log insert fails (governor limit hit, field validation error), the business transaction will also fail. This is the single most dangerous logging mistake.
-
-4. **No correlation ID in multi-step operations** — without a correlation ID, tracing a failure across trigger → service → queueable → integration is not reliably possible.
-
-5. **No logging in integration HTTP client** — integration errors are the most common source of production incidents. Every callout must log its start, status code, duration, and any error.
-
-6. **No LogError_Subflow on flow fault paths** — flows fail silently without fault logging, and users may not report failures immediately. All DML and action fault paths must connect to LogError_Subflow.
-
-7. **Building dashboards before the log object is in production** — the report and dashboard depend on AppLog__c existing with all fields. Always deploy the object first.
-
-8. **Not truncating long messages** — LongTextArea has limits. Logs from large HTTP responses or stack traces can exceed field limits. Always truncate input before inserting.
-
-9. **Logging inside a loop** — do NOT call `AppLogger.info()` or `AppLogger.error()` inside a `for` loop that processes many records. Collect errors and log a summary after the loop, or log at the operation level.
-
-10. **Not including component name in the log** — "ERROR: null" in the Message__c field with no Component__c value is completely unactionable.
-
-11. **Referencing `AppLogger` when it is not deployed in the target org** — `AppLogger` is a project standard pattern but is not a managed package or native Salesforce class. If it does not exist as a deployed Apex class in the org, every class that references it will fail to compile. Before using `AppLogger` in any service class, verify it exists in the org. If it does not, fall back to `System.debug(LoggingLevel.ERROR, context + message)` and add a TODO comment to migrate once `AppLogger` is deployed. Never assume `AppLogger` is present just because the guidelines recommend it.
+| # | Mistake (brief) | Correct approach |
+|---|---|---|
+| 1 | Using `System.debug()` as production logging | persist via `AppLogger.log(...)` so logs are queryable, reportable, and survive trace-flag expiry |
+| 2 | Logging raw PII / secrets / full HTTP bodies | sanitize before passing into `AppLogger.log`; abbreviate response bodies to 500 chars |
+| 3 | `insert log;` instead of `Database.insert(log, false)` | always allOrNone=false — logging failure must not fail the business transaction |
+| 4 | No correlation ID across multi-step ops | generate `<userPrefix>-<millis>` at entry and propagate via parameter, header, or invocable input |
+| 5 | No logging in integration HTTP client | log start, status, duration, and error on every callout — integrations are the #1 incident source |
+| 6 | No `LogError_Subflow` on flow fault paths | every DML / action element fault connector routes to `LogError_Subflow` |
+| 7 | Building dashboards before the log object is in production | deploy `Agent_Activity_Log__c` (or the future `AppLog__c`) first, validate writes, then build reports |
+| 8 | Not truncating long messages | abbreviate to 5000 chars for `Error__c` and 32000 for `Agent_Comments__c` — `AppLogger` does this for you; do it yourself if calling other inserts |
+| 9 | Logging inside a per-record loop | log a summary after the loop; per-record logging blows governor limits and dashboard counts |
+| 10 | Missing component name in the log | always pass `Class.method` form as `context` — `(no-context)` rows are unactionable |
+| 11 | Referencing `AppLogger` when it is not deployed in the target org | `AppLogger` is a project standard pattern but is not a managed package or native Salesforce class. If it does not exist as a deployed Apex class in the org, every class that references it will fail to compile. Before using `AppLogger` in any service class, verify it exists in the org. If it does not, fall back to `System.debug(LoggingLevel.ERROR, context + message)` and add a TODO comment to migrate once `AppLogger` is deployed. Never assume `AppLogger` is present just because the guidelines recommend it. |
+| 12 | Calling imaginary `AppLogger` overloads (`AppLogger.info(...)`, `AppLogger.error(component, cid, op, Exception)`, `AppLogger.generateCorrelationId()`) | the deployed shim has exactly one method: `log(String, Severity, String, Id)`. Compose richer behavior inline or extend `AppLogger.cls` and update this doc |
+| 13 | Passing a non-Case Id as `recordId` and expecting `Case__c` to populate | `AppLogger` only stamps `Case__c` when `recordId.getSobjectType() == Case.SObjectType`. Other record types are ignored on the Case lookup |
+| 14 | Logging a `FATAL` severity literal in the message and expecting alerting | `Severity.FATAL` does not exist on the deployed enum. Use ERROR; if you need fatal semantics, extend the enum and add a `Severity` field to the object |
 
 ---
 
-## Definition of Done (Observability)
+## 15. Empirical Findings & Implementation Notes
 
-An observability implementation is not complete until ALL items on this checklist are confirmed.
-
-### Object and Infrastructure
-
-- [ ] AppLog__c object deployed with all required fields (Level__c, Component__c, Operation__c, RelatedRecordId__c, CorrelationId__c, AsyncJobId__c, Message__c, StackTrace__c, IntegrationSystem__c, Direction__c, StatusCode__c, DurationMs__c)
-- [ ] AppLog__c OWD set to Private
-- [ ] AppLogger Apex class deployed (`without sharing`, `Database.insert(log, false)`, sanitize() method present)
-- [ ] LogError_Subflow deployed and tested in sandbox
-
-### Apex Logging
-
-- [ ] All critical Apex service methods log: entry (INFO), success (INFO), error (ERROR with exception)
-- [ ] All integration HTTP clients log: pre-callout INFO, post-callout with status code and duration
-- [ ] Correlation IDs generated at entry points and passed through all downstream calls
-- [ ] All async jobs (Queueable, Batch) log job IDs and use correlation IDs
-
-### Flow Logging
-
-- [ ] LogError_Subflow connected on fault paths of all DML elements
-- [ ] LogError_Subflow connected on fault paths of all Apex action elements
-- [ ] LogError_Subflow tested — fault is caught, AppLog__c created, transaction not re-failed
-
-### Safety
-
-- [ ] No PII or secrets in any log message (sanitize() covers all code paths)
-- [ ] No `insert log;` pattern anywhere — only `Database.insert(log, false)`
-- [ ] No logging inside loops
-
-### Visibility
-
-- [ ] AppLog__c report for ERROR hotspots created and shared
-- [ ] AppLog__c integration health report created
-- [ ] Org Operational Health dashboard created
-- [ ] Alert configured for FATAL level logs
-- [ ] Alert configured for integration 401/403 status codes
+| # | Date | Documented approach | What actually works | Why / Context |
+|---|---|---|---|---|
+| 1 | 2026-05-16 | Earlier drafts of this guideline assumed an `AppLog__c` custom object with `Level__c`, `Component__c`, `CorrelationId__c`, etc. | The deployed `AppLogger` in PlusGradeFullSB writes to the pre-existing `Agent_Activity_Log__c` object using fixed picklist values (`Action_Name__c='Agent_Invocation'`, `AI_Tool_Name__c='Agent Chat'`, `Source__c='UI_Chat'`). Component + message + severity are concatenated into `Agent_Comments__c`. No `AppLog__c` exists. | Verified by reading `force-app/main/default/classes/AppLogger.cls` and the `Agent_Activity_Log__c` field directory on 2026-05-16. Future migrations to a dedicated `AppLog__c` need a deliberate refactor. |
+| 2 | 2026-05-16 | `AppLogger.error(component, correlationId, operation, Exception e)` and similar typed overloads were prescribed by earlier drafts | The deployed shim has ONE public method: `log(String context, Severity sevLevel, String message, Id recordId)`. Exception details must be flattened into the `message` argument by the caller: `e.getMessage() + ' | ' + e.getStackTraceString()`. | Confirmed in `AppLogger.cls` and exercised by `AppLoggerTest.cls` test methods. |
+| 3 | 2026-05-16 | `developer.salesforce.com` and `help.salesforce.com` doc pages as authoritative references for runtime details (System.Logger, RTEM, debug log levels) | WebFetch returns the page header only — JS-rendered body is unavailable. The `forcedotcom/sf-skills` and project-internal Apex code are the ground truth used here. | Same root cause as `agentforce-agent-script-reference.md` empirical finding #5. Cite official URLs as canonical pointers but verify against project code. |
+| 4 | 2026-05-16 | A dedicated `Correlation_Id__c` column on the log object for first-class correlation queries | `Agent_Activity_Log__c` has no correlation-id field. Embed `cid=<token>` inside the message; query with `Agent_Comments__c LIKE '%cid=<token>%'`. Slower than an indexed lookup but works without schema changes. | Pragmatic shim until a real `AppLog__c` (or a new field on `Agent_Activity_Log__c`) is introduced. |
 
 ---
+
+*Observability & Logging Guidelines | Plusgrade PlusGradeFullSB | Last verified 2026-05-16*
 
 ## Official References
 
-- Salesforce Platform Events: https://developer.salesforce.com/docs/atlas.en-us.platform_events.meta/platform_events/
-- Database Class (allOrNone parameter): https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_methods_system_database.htm
-- Salesforce Reports and Dashboards: https://help.salesforce.com/s/articleView?id=sf.customize_cdbstdbdashboards.htm
-- Apex Governor Limits: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm
-- Apex Exception Class: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_exception_methods.htm
-- Flow Fault Paths: https://help.salesforce.com/s/articleView?id=sf.flow_ref_elements_fault.htm
+- [Apex Developer Guide — Debug Log](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_debugging_debug_log.htm)
+- [Apex Developer Guide — Debug Log Levels](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_log_debug_levels.htm)
+- [System.Logger class](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_class_System_Logger.htm)
+- [System.LoggingLevel enum](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_enum_System_LoggingLevel.htm)
+- [Database class — insert with allOrNone](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_methods_system_database.htm)
+- [Platform Events Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.platform_events.meta/platform_events/)
+- [Real-Time Event Monitoring overview](https://help.salesforce.com/s/articleView?id=sf.real_time_event_monitoring_overview.htm&type=5)
+- [Flow Fault Paths](https://help.salesforce.com/s/articleView?id=sf.flow_ref_elements_fault.htm)
+- [Apex Governor Limits](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm)
+- [forcedotcom/sf-skills — debugging-apex-logs](https://github.com/forcedotcom/sf-skills/tree/main/skills/debugging-apex-logs)

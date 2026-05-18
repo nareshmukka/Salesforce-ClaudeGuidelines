@@ -1,849 +1,579 @@
-# Agentforce Agent Script / Instructions Guidelines
+# Agentforce Agent Script — Authoring Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Guidelines for designing and writing Agentforce agent instructions, topic configurations, and orchestration logic. Attach when building, reviewing, or modifying any Agentforce agent.
+How to write `.agent` files well. Pair with **[agentforce-agent-script-reference.md](agentforce-agent-script-reference.md)** for the DSL grammar and **[agentforce_authoring_bundle_guide.md](agentforce_authoring_bundle_guide.md)** for the lifecycle.
 
-> **Important**: Agentforce metadata and capabilities evolve rapidly with each Salesforce release. Items marked "verify in target org/release" MUST be confirmed in your org before implementation.
+**Verified against** the same canonical sources. Last verified 2026-05-16.
 
 ---
 
-## Table of Contents
+## 1. Two Execution Phases — The Mental Model
 
-1. [Required Agent Output Contract](#1-required-agent-output-contract)
-2. [Agentforce Concepts Overview](#2-agentforce-concepts-overview)
-3. [Instructions Design Principles](#3-instructions-design-principles)
-4. [Action Gating](#4-action-gating)
-5. [Variable Handling](#5-variable-handling)
-6. [Grounding and Knowledge](#6-grounding-and-knowledge)
-7. [When to Use Flows vs Apex Actions](#7-when-to-use-flows-vs-apex-actions)
-8. [Verification Steps](#8-verification-steps)
-9. [Deterministic Orchestration](#9-deterministic-orchestration)
-10. [Safety Guardrails](#10-safety-guardrails)
-11. [Conversation Behavior](#11-conversation-behavior)
-12. [Testing Strategy](#12-testing-strategy)
-13. [Deployment / Versioning Considerations](#13-deployment--versioning-considerations)
-14. [Example: Service Support Agent for Case Creation](#14-example-service-support-agent-for-case-creation)
-15. [Anti-Patterns](#15-anti-patterns)
-16. [Definition of Done](#16-definition-of-done)
-17. [Official References](#17-official-references)
+Every reasoning turn has two phases. Understanding them is the prerequisite for writing good instructions.
+
+**Phase 1 — Deterministic Resolution.** The runtime walks `instructions: ->` top to bottom. It evaluates `if`/`else`, executes `run @actions.X`, runs `set` directives, and accumulates matching `| <prompt line>` text into the LLM's prompt. The LLM is not involved yet.
+
+**Phase 2 — LLM Reasoning.** The runtime hands the resolved prompt + the available `reasoning.actions` (as tools) to the LLM. The LLM decides what to do: call a tool, transition, escalate, or compose a text response. It CANNOT modify the prompt — it only reasons against what Phase 1 produced.
+
+This split is the single most important rule:
+
+> **Deterministic logic controls what the agent KNOWS. The LLM controls WHETHER and HOW to act on that knowledge.**
+
+Whenever you can pre-compute something with conditions or actions, do it. Don't ask the LLM to "remember", "check", or "decide" — set the prompt to only contain what's relevant for this turn.
 
 ---
 
-## 1. Required Agent Output Contract
+## 2. Condition-Based Instructions — Not Paragraph Prose
 
-Every Agentforce agent design response MUST include all of the following sections. Do not deliver a partial agent design — incomplete designs will lead to broken orchestration, security gaps, or untestable agents.
+The single biggest authoring mistake is writing reasoning as flowing prose. The DSL exists to give you condition-based **steps** that compile into a turn-specific prompt.
 
-1. **Agent purpose and scope definition** — what business problem the agent solves, what channels it operates on, what it is explicitly NOT allowed to do
-2. **Topics/subagents list with responsibility boundaries** — each topic named, scoped, and bounded so the LLM routes correctly
-3. **Action inventory (flows, Apex invocables, standard actions)** — every callable action with its API name, type (Flow / Apex / Standard), and one-line purpose
-4. **Variable contract (input/output for each action)** — all input and output variable names, types, and whether required or optional
-5. **Orchestration sequence with gates and guards** — numbered steps, each with its gating condition and what happens on failure
-6. **Safety guardrails** — hallucination prevention, out-of-scope handling, PII policy, escalation triggers
-7. **Test conversation examples** — at minimum happy path, wrong verification code, contact not found, action failure, out-of-scope
-8. **Deployment/versioning notes** — metadata types, CLI commands, sandbox-first policy, version naming
-9. **Rollback approach** — how to revert to the prior version if the new version fails in production
+### Anti-pattern (paragraph prose — DON'T)
+
+```
+reasoning:
+   instructions: |
+      You are an email analysis specialist. First load the case context using
+      Get_Email_Resend_Context. Then look at the email body. If you find a 5-group
+      confirmation code in the format xxxx-xxxx-xxxx-xxxx-xxxx save it. If you
+      don't find one in the body, fall back to the image OCR action. After all
+      that, return the JSON. Do not paraphrase, do not invent fields...
+```
+
+The LLM has to keep all that in mind every turn. The prompt is identical regardless of state. Re-entry repeats every step. Re-reads happen unnecessarily.
+
+### Canonical pattern (condition-based steps — DO)
+
+```
+reasoning:
+   instructions: ->
+      # STEP 1 — Ground context
+      if @variables.context_loaded == False:
+         | Load the Case and EmailMessage via {!@actions.get_context}.
+
+      # STEP 2 — Parse confirmation from body
+      if @variables.context_loaded == True and @variables.confirmation_from_body == "":
+         | Scan the email body for the canonical 5-group code
+           xxxx-xxxx-xxxx-xxxx-xxxx (alphanumeric, hyphens/no-hyphens/spaces accepted).
+           Save the captured value via {!@actions.set_confirmation_from_body}.
+
+      # STEP 3 — Fallback to image OCR if body empty
+      if @variables.context_loaded == True and @variables.confirmation_from_body == "":
+         | If the body has no code, run {!@actions.get_image_confirmation} for OCR.
+
+      # STEP 4 — Return JSON when we have a code
+      if @variables.confirmation_from_body != "" or @variables.confirmation_from_image != "":
+         | Return EXACTLY this JSON, no markdown fence, no prose:
+           {"summary":"","category":"","intent":"","confirmationNumber":"",
+            "newEmailAddress":null,"confidence":0.0}
+           Use action-output values verbatim. Do not paraphrase or round.
+```
+
+What changed:
+- Each step has its own `if @variables.X:` gate. The LLM only sees the prompt fragment when it's relevant.
+- Re-entry doesn't repeat completed steps (`if @variables.context_loaded == False:` is False after the first turn).
+- Step boundaries are visible to a reviewer.
+- Inline action references `{!@actions.get_context}` are explicit, not buried in prose.
 
 ---
 
-## 2. Agentforce Concepts Overview
+## 3. Block Labels — Use the Canonical Names
 
-> Verify naming conventions in the current Salesforce release. Terminology has shifted between releases (e.g., "Bot" vs "Agent", "topic" vs "subagent").
+Field names matter. The parser rejects unknown fields without helpful errors. **Use these exact names:**
 
-### Core Components
+| Block / property | Canonical name | Common wrong forms |
+|---|---|---|
+| Agent identifier | `developer_name` | ~~`agent_name`~~, ~~`api_name`~~ |
+| Display name | `agent_label` | ~~`name`~~, ~~`displayName`~~ |
+| Agent type | `agent_type` | ~~`type`~~ |
+| Welcome message | `system.messages.welcome` | ~~`welcome_message`~~ |
+| Error message | `system.messages.error` | ~~`error_message`~~, ~~`fallback`~~ |
+| Global instructions | `system.instructions` | ~~`prompt`~~, ~~`persona`~~ |
+| Variables block | `variables` | ~~`state`~~, ~~`memory`~~ |
+| Router entry point | `start_agent <id>` | ~~`router`~~, ~~`entry`~~ |
+| Subagent | `subagent <id>` | ~~`topic`~~ (renamed April 2026) |
+| Action definitions | `actions:` (under subagent) | ~~`tools`~~, ~~`functions`~~ |
+| Reasoning | `reasoning:` | ~~`logic`~~ |
+| Reasoning instructions | `reasoning.instructions` | ~~`reasoning.prompt`~~ |
+| LLM-available actions | `reasoning.actions` | ~~`reasoning.tools`~~ |
+| Pre-reasoning hook | `before_reasoning:` (no `instructions:` wrapper) | ~~`pre_reasoning`~~ |
+| Post-reasoning hook | `after_reasoning:` (no `instructions:` wrapper) | ~~`post_reasoning`~~ |
+| Action target | `target:` | ~~`url`~~, ~~`endpoint`~~ |
+| Input gate | `available when` | ~~`enabled_if`~~, ~~`visible_when`~~ |
 
-| Term | Description |
+---
+
+## 4. Writing System Instructions
+
+`system.instructions` is the agent's constitution. Keep it 15–30 lines covering:
+
+```
+system:
+   instructions: |
+      ROLE
+      You are a server-invoked email-analysis specialist for Plusgrade.
+
+      GROUNDING
+      Ground every output in the data returned by Get_Email_Resend_Context.
+      Never invent Case data, customer email content, or email history.
+
+      RETURN CONTRACT
+      - STRUCTURED_ANALYSIS mode → ONLY the prescribed JSON. No markdown fence. No prose.
+      - EMAIL_TEMPLATE mode → ONLY a plain-text email body. No JSON. No sign-off.
+
+      DATA PRIVACY
+      Treat the Case payload as PII. Do not echo personally identifiable details
+      back into the response unless the user explicitly asked for them.
+
+      FABRICATION
+      If a value isn't present in action outputs, leave the corresponding JSON
+      field null/empty. Never guess.
+
+      ERROR DEFAULT
+      If get_context returns errorMessage, return {"summary":"","category":"FAILED",
+      "intent":"NEEDS_HUMAN","confirmationNumber":"","newEmailAddress":null,
+      "confidence":0.0}.
+
+      WHAT NOT TO DO
+      Do not call the same action twice. Do not paraphrase dates. Do not
+      round numbers. Do not address the customer ("Dear...") — this is
+      server-invoked, there is no human in the loop.
+```
+
+Notes:
+- Section headers (ROLE / GROUNDING / RETURN CONTRACT / DATA PRIVACY / FABRICATION / ERROR DEFAULT / WHAT NOT TO DO) are a Plusgrade convention — they help reviewers, the LLM happily reads them.
+- Use **operational third-person** for server-invoked agents (no "ask the customer..." since there is no customer).
+- For service agents, switch to **second-person imperative** ("Help the customer...", "Ask for their order number").
+- Subagents can override with their own `system:` block when domain expertise differs.
+
+### Role, company, description — write these properly
+
+The `description`, `role`, and `company` fields in `config:` are not cosmetic. The LLM sees them. A two-word `role:` makes the agent generic; a focused one makes it useful.
+
+```
+config:
+   description: "Server-invoked employee agent that analyzes inbound support emails (STRUCTURED_ANALYSIS mode) and drafts personalized reply emails from named templates (EMAIL_TEMPLATE mode). Clean rebuild of Email_Resend_Agent v15."
+   role: "Senior support specialist for Plusgrade — fluent in airline/hotel loyalty redemption flows, frequent-flyer programs, and the canonical 20-character confirmation-code format (xxxx-xxxx-xxxx-xxxx-xxxx). Reads emails like a tier-2 agent who has seen the same 30 failure modes a hundred times."
+   company: "Plusgrade — global airline/hotel loyalty solutions operating across 30+ markets in partnership with major carriers (United, JetBlue, Air Canada, Lufthansa) and hotel groups (Hilton, Hyatt, IHG). The core product is point-based redemption and ancillary-upsell tooling that integrates with carrier reservation systems via the Plusgrade platform."
+```
+
+Three sentences of company context costs nothing and meaningfully grounds the agent in the right vocabulary.
+
+---
+
+## 5. Variables — State That Matters
+
+Use `variables:` to store anything that:
+- Gates a step (`context_loaded`, `is_verified`, `template_loaded`)
+- Was captured from a previous action (`case_subject`, `confirmation_from_body`)
+- Came from the runtime (`session_id`, `user_role` — `linked`)
+
+Don't use variables for:
+- Constants — bake them into prompt text or use a Custom Metadata Type read by an action
+- Things only one subagent needs that don't outlive that subagent — local instruction text is fine
+
+```
+variables:
+   # Identity
+   case_id: mutable id = ""
+      description: "Case Id the conversation is anchored to (slot-filled from the request)"
+   email_message_id: mutable id = ""
+      description: "EmailMessage Id of the inbound email"
+
+   # State machine flags
+   mode: mutable string = "STRUCTURED_ANALYSIS"
+      description: "STRUCTURED_ANALYSIS or EMAIL_TEMPLATE — router sets at hand-off"
+   context_loaded: mutable boolean = False
+   template_loaded: mutable boolean = False
+
+   # Action outputs captured for re-use
+   confirmation_from_body: mutable string = ""
+      description: "Confirmation code extracted from the email body"
+   confirmation_from_image: mutable string = ""
+      description: "Confirmation code extracted from the image OCR action"
+   template_error_message: mutable string = ""
+      description: "Populated by Get_Email_Template when it fails"
+```
+
+**Always include a `description:`** when the LLM may need context for slot-filling (`@utils.setVariables`).
+
+**Naming**: snake_case, descriptive, no abbreviations. `case_id` (good) vs `cid` (bad). `confirmation_from_body` (good) vs `conf_str` (bad).
+
+---
+
+## 6. The Router Pattern
+
+The `start_agent` IS the router. Keep it thin:
+
+```
+start_agent agent_router:
+   label: "Agent Router"
+   description: "Classify the inbound request and route to the right subagent"
+
+   reasoning:
+      instructions: |
+         You are a router only. Do NOT analyze, summarise, or answer yourself.
+         Pick exactly one transition action and route immediately.
+         - If the message asks to draft a reply using a named email template,
+           use go_email_template.
+         - Otherwise use go_structured_analysis.
+
+      actions:
+         go_structured_analysis: @utils.transition to @subagent.structured_analysis
+            description: "Analyze an inbound support email and return STRUCTURED_ANALYSIS JSON"
+
+         go_email_template: @utils.transition to @subagent.email_template_drafting
+            description: "Draft a reply using a named email template ('Use the email template named ...')"
+```
+
+Rules for routers:
+- Every transition action MUST have its own `description:` — that's the only signal the LLM uses to pick.
+- Add the trigger phrasing into the `description:` ("'Use the email template named ...'") so the LLM doesn't have to guess.
+- Use `instructions: |` (prompt-only) — the router has no state, just classification.
+- Do NOT define backing-logic actions in `start_agent` — they'd be visible to the planner from every subagent, polluting the action space.
+
+---
+
+## 7. Subagent Anatomy
+
+Every subagent is a self-contained domain:
+
+```
+subagent structured_analysis:
+   label: "Structured Analysis"
+   description: "Analyze an inbound email and return JSON for the LWC parser"
+
+   # Optional system override
+   system:
+      instructions: |
+         You are an email-analysis specialist. Return JSON only — no markdown, no prose.
+
+   # Subagent-level ACTION DEFINITIONS (the "what exists" layer)
+   actions:
+      get_context:
+         description: "Fetches Case + EmailMessage + recent email history"
+         label: "Get Email Resend Context"
+         include_in_progress_indicator: True
+         progress_indicator_message: "Loading case context..."
+         inputs:
+            caseId: id
+               description: "Salesforce Case Id"
+               is_required: True
+            emailMessageId: id
+               description: "Source EmailMessage Id"
+               is_required: True
+         outputs:
+            caseSubject: string
+            emailBody: string
+            history: list[object]
+               complex_data_type_name: "@apexClassType/c__GetEmailResendContextAction$EmailHistoryItem"
+            errorMessage: string
+               description: "Populated on failure. Empty on success."
+               filter_from_agent: True
+         target: "apex://GetEmailResendContextAction"
+
+   # Reasoning — condition-based steps
+   reasoning:
+      instructions: ->
+         if @variables.context_loaded == False:
+            | Load the Case and EmailMessage via {!@actions.get_context}.
+
+         if @variables.context_loaded == True and @variables.confirmation_from_body == "":
+            | Scan the email body for the canonical 5-group code.
+              Save it via {!@actions.set_confirmation_from_body}.
+
+         # ... more steps ...
+
+      actions:
+         get_context: @actions.get_context
+            with caseId = @variables.case_id
+            with emailMessageId = @variables.email_message_id
+            set @variables.case_subject = @outputs.caseSubject
+            set @variables.email_body = @outputs.emailBody
+            set @variables.context_loaded = True
+
+         set_confirmation_from_body: @utils.setVariables
+            description: "Save the confirmation code extracted from the email body"
+            with confirmation_from_body = ...
+```
+
+The split between **subagent-level `actions:`** (definitions: target, inputs, outputs) and **`reasoning.actions:`** (invocations: with, set, gates) is intentional. Definitions describe what's possible; reasoning describes when and how.
+
+---
+
+## 8. Action Design
+
+### Inputs
+
+- **Slot-fill (`...`)** when the value comes from conversation context: `with order_id = ...`
+- **Bound** when the value is already known: `with case_id = @variables.case_id`
+- **Literal** when the value is fixed: `with limit = 10`
+
+### Outputs
+
+Every output should have a `description:` and (for non-displayable internals) `filter_from_agent: True`:
+
+```
+outputs:
+   intent_classification: string
+      description: "Classified intent — used for routing"
+      filter_from_agent: True       # Don't show to user
+      is_used_by_planner: True       # Let LLM reason about it for routing
+   summary: string
+      description: "Customer-facing summary of the analysis"
+      is_displayable: True
+   errorMessage: string
+      description: "Populated on failure. Empty on success."
+      filter_from_agent: True
+```
+
+### errorMessage is the deterministic safety net
+
+If the action's failure must change agent behavior, declare `errorMessage: string` in `outputs:`. The Apex `@InvocableMethod` populates it inside a try/catch (never throws). Then your guardrail is deterministic:
+
+```
+reasoning:
+   actions:
+      get_template: @actions.get_email_template
+         with templateName = @variables.requested_template
+         set @variables.template_body = @outputs.body
+         set @variables.template_error_message = @outputs.errorMessage
+         set @variables.template_loaded = True
+
+   instructions: ->
+      if @variables.template_loaded == True and @variables.template_error_message != "":
+         | The requested template could not be loaded. Return a graceful
+           fallback explaining the issue and asking the user to try again.
+```
+
+If `errorMessage` doesn't exist on the action, the guardrail collapses to prose ("if action fails..."), and the LLM has to infer failure. Don't ship that pattern.
+
+### `available when` gates
+
+Use `available when` to hide actions until prerequisites are met:
+
+```
+reasoning:
+   actions:
+      check_eligibility: @actions.check_eligibility
+         available when @variables.is_verified == True
+
+      proceed_with_refund: @actions.process_refund
+         available when @variables.is_verified == True and @variables.eligible == True
+```
+
+This is how to prevent the LLM from calling actions out of order.
+
+---
+
+## 9. Transition Syntax — Context-Sensitive
+
+| Context | Syntax |
 |---|---|
-| **Agent (Bot)** | Top-level configuration entity. Associated with a channel (Messaging for In-App and Web, Experience Cloud, etc.). The bot configuration defines which topics are available and global behavior. |
-| **Topic** (also called subagent) | A logical grouping of related capabilities and instructions for a specific task domain. Examples: `CaseCreation`, `GeneralFAQ`, `AccountLookup`. The LLM selects a topic based on the user's intent and the topic's description. |
-| **Action** | A callable function the agent can invoke. Can be an Autolaunched Flow, an Apex invocable method, a standard platform action (e.g., knowledge search, send email), or a prompt template action. |
-| **GenAiPlannerBundle** | Metadata type wrapping the agent's LLM orchestration configuration, topic assignments, conversation variable definitions, and binding rules. This is the "brain" configuration. |
-| **GenAiPlugin** | Metadata type representing a single topic/subagent definition. Contains the topic's natural language instructions and references to its available actions (GenAiFunctions). |
-| **GenAiFunction** | Metadata type representing a single action definition. Wraps a Flow or Apex invocable. Contains description (used by LLM for action selection), input/output parameter mappings. |
+| Inside `reasoning.actions:` (LLM picks) | `name: @utils.transition to @subagent.X` |
+| Inside `instructions: ->`, `before_reasoning:`, `after_reasoning:` (deterministic) | bare `transition to @subagent.X` |
 
-### Component Hierarchy
+Mixing the two = parser error.
 
-```
-Bot (.bot-meta.xml)
-└── Bot Version (.botVersion-meta.xml)
+`@utils.transition to` is a **handoff** — the target subagent takes over completely and generates the user-facing reply.
 
-GenAiPlannerBundle (.genAiPlannerBundle-meta.xml)
-├── References topics (GenAiPlugins)
-├── Defines conversation variables
-└── Contains agent-level and topic-level instructions
-
-GenAiPlugin (.genAiPlugin-meta.xml) — one per topic/subagent
-└── GenAiFunction (.genAiFunction-meta.xml) — one per action within the plugin
-    └── Invocation Target: Flow OR Apex invocable
-```
-
-**Relationship summary**: Bot → GenAiPlannerBundle → GenAiPlugin(s) → GenAiFunction(s) → Flow/Apex
-
-The Bot activates a specific version of the PlannerBundle. The PlannerBundle's instructions direct the LLM to route to topics (Plugins). Each Plugin has its own instructions and a set of Functions (actions). Functions invoke the actual business logic in Flows or Apex.
-
----
-
-## 3. Instructions Design Principles
-
-### Language Requirements
-
-- Instructions MUST be written in clear, imperative natural language — the LLM reads these instructions at runtime
-- Use second-person imperative: "Ask the customer...", "Use action FLO_X...", "Store output..."
-- Use MUST / MUST NOT for hard requirements that are never negotiable
-- Use "only proceed if [condition]" for gate checks
-- Use "If [condition], then [action]" for conditional branching
-
-### Scope and Focus
-
-- **Agent-level instructions**: global behavior, tone, escalation rules, topics available, what is out of scope
-- **Topic-level instructions**: specific ordered steps for that topic's task domain only
-- Keep each topic focused on one domain — do not let a topic handle multiple unrelated business processes
-- Instructions should make it impossible for the LLM to confuse two topics' responsibilities
-
-### Structure
-
-- Use numbered steps for ordered operations — "Step 1...", "Step 2...", etc.
-- State the exact action name in instructions (matching the GenAiFunction name exactly)
-- State what variables to store from each action's output
-- State gating conditions explicitly before each step
-- State what to do on failure after each step
-
-### Clarity Over Brevity
-
-- It is better to be explicit and verbose in instructions than to leave ambiguity the LLM could exploit
-- Never rely on the LLM's general knowledge to fill gaps — state everything explicitly
-- Repeat critical rules (e.g., "Do not fabricate a case number") more than once if needed
-
----
-
-## 4. Action Gating
-
-Gates are the primary mechanism for enforcing deterministic orchestration. Every gate must be explicit in the instructions.
-
-### Gate Types
-
-**Hard gates (sequential dependency)**
-> "Do not proceed to Step N until Step N-1 output [variable] is confirmed as [expected value]."
-
-Example:
-> "GATE: Do not proceed to Step 3 until isVerified = true. If isVerified is false or not set, do not continue under any circumstances."
-
-**Authentication gates**
-> "Verify the customer's identity before taking any action on their account. Identity is verified when isVerified = true and verifiedContactId is populated."
-
-**Confirmation gates (before irreversible actions)**
-> "Present a summary of the case details to the user and wait for explicit confirmation (YES) before calling FLO_CreateCase. Do not create a case without this confirmation."
-
-**Variable population gates**
-> "GATE: Do not proceed to Step 4 without a valid contactId. If contactId is empty, re-attempt Step 3. If still empty after retry, escalate to a live agent."
-
-### Failure Handling at Each Gate
-
-Every gate must have a defined failure path:
-
-```
-GATE: isVerified must = true before this step.
-- If isVerified = false: inform the customer that identity verification failed.
-  Allow one retry of the verification step.
-  If verification fails a second time: say "I'm unable to verify your identity.
-  Let me connect you with a member of our team." and transfer to live agent.
-- If isVerified is not set (action did not run): treat as verification failure.
-```
-
----
-
-## 5. Variable Handling
-
-### Persistence
-
-- Variables persist within a conversation session via **conversation variables** defined in the GenAiPlannerBundle
-- Variables do NOT persist across sessions by default — each new conversation starts fresh
-- If cross-session persistence is needed, it must be handled via org data (records), not conversation variables
-
-### Mapping Rules
-
-- Map action outputs to conversation variables **explicitly** — never assume a variable is auto-populated
-- In instructions, use this pattern: "Store output: [outputVarName] → conversation variable [varName]"
-- Critical variables (e.g., `isVerified`, `contactId`, `authenticationKey`) MUST be set before any step that depends on them
-- Variable names in instructions MUST match the actual Flow/Apex variable names exactly (case-sensitive)
-
-### Naming Conventions
-
-| Variable Pattern | Usage |
-|---|---|
-| `input_[Name]` | Input variable passed into a Flow/Apex action |
-| `output_[Name]` | Output variable returned from a Flow/Apex action |
-| `var_[Name]` | Conversation-level variable stored across steps |
-| `context_[Name]` | Context variables auto-populated by Agentforce (e.g., `RoutableId`, `endUserEmail`) |
-
-### Critical Variable Checklist
-
-Before any sensitive action, these variables must be confirmed populated:
-- `isVerified` = true
-- `contactId` or `verifiedContactId` (not empty)
-- `authenticationKey` (for steps that use it downstream)
-- `draftConfirmed` = true (before irreversible record creation)
-
----
-
-## 6. Grounding and Knowledge
-
-### Knowledge Base Actions
-
-- Use the "Answer questions using the knowledge base" standard action for FAQ / informational topics
-- Knowledge actions should be configured as the **primary action** for GeneralFAQ-type topics
-- Do not mix knowledge-based responses with structured record actions in the same topic — keep them separate
-
-### Knowledge-First Fallback Pattern
-
-For topics that try structured actions first:
-1. Attempt structured action (e.g., record lookup)
-2. If action returns no results OR status = ERROR: fall back to knowledge base search
-3. If knowledge base also returns no relevant results: escalate to live agent
-
-### Grounding Rules
-
-- Instructions MUST state: "Only respond with information from the knowledge base or confirmed action results."
-- Instructions MUST state: "Do not invent, guess, or infer answers. If you cannot find the answer in the knowledge base or via a confirmed action result, say so and offer to connect the customer with a team member."
-- For live org data (e.g., account details, case status): always use a Get Records action or Apex invocable to fetch current data before responding. Never use information from training data to answer account-specific questions.
-
-### Anti-Hallucination Policies
-
-The following MUST appear explicitly in topic instructions for any topic that retrieves or creates records:
-
-```
-IMPORTANT: Do not fabricate or guess any of the following:
-- Case numbers
-- Contact IDs or account IDs
-- Record status values
-- Dates, SLAs, or resolution times
-Use ONLY the values returned by action outputs. If an output is empty, treat it as a failure.
-```
-
----
-
-## 7. When to Use Flows vs Apex Actions
-
-| Scenario | Recommended Approach |
-|---|---|
-| Simple record lookup (single object) | Autolaunched Flow with Get Records element |
-| Simple record create/update | Autolaunched Flow with Create Records / Update Records element |
-| Complex data processing across multiple objects | Apex invocable method |
-| Business logic with conditional branching and multiple decisions | Apex invocable (cleaner, testable) OR complex Flow (verify governor limits) |
-| Callouts to external systems / APIs | Apex invocable with Named Credentials (Flows have callout limitations) |
-| Picklist dependency matrix / configuration lookup from Custom Metadata | Apex invocable reading Custom Metadata Type records |
-| Email / notification sending via platform | Autolaunched Flow using Send Email element or platform actions |
-| Verification code generation and validation | Autolaunched Flow (simple) or Apex (if custom hashing logic required) |
-| Knowledge base search | Standard Agentforce action (streamKnowledgeSearch — verify availability in target org) |
-| Returning structured JSON for the LLM to parse | Apex invocable (flows have limited String manipulation for JSON construction) |
-
-### Decision Principle
-
-> If the logic can be reliably built and maintained in a Flow without exceeding governor limits or requiring complex string/JSON manipulation, use a Flow. Use Apex for complexity, callouts, and performance-sensitive operations.
-
----
-
-## 8. Verification Steps
-
-### Identity Verification Is Mandatory
-
-Identity verification MUST be a prerequisite gate for all account-sensitive actions, including:
-- Case creation
-- Account or contact data retrieval
-- Account modification
-- Billing or invoice lookup
-- Any action that reads or writes customer-specific data
-
-### Standard Verification Pattern
-
-The following pattern MUST be implemented in this exact order:
-
-```
-Step 1: Send verification code
-  → Action: FLO_SendVerificationCode
-  → Input: endUserEmail (from conversation context)
-  → Outputs: authenticationKey, status, outMessage
-  → On ERROR: surface outMessage, offer live agent
-
-Step 2: User submits verification code
-  → Ask: "Please enter the verification code sent to your email."
-  → Collect: verificationCode (user input)
-
-Step 3: Verify code and find contact
-  → Action: FLO_VerifyContact
-  → Inputs: authenticationKey, endUserEmail, verificationCode
-  → Outputs: isVerified (Boolean), verifiedContactId, status, outMessage
-  → On isVerified = false: allow 1 retry
-  → On 2nd failure: transfer to live agent
-
-Step 4 onward: All steps GATED on isVerified = true
-```
-
-### Retry Policy
-
-- Allow exactly **one retry** on a failed verification code
-- After two consecutive failures: do not allow further attempts in the same session
-- Transfer to live agent with message: "I was unable to verify your identity. Let me connect you with a member of our support team."
-
-### Never Skip Verification
-
-Instructions MUST state explicitly:
-> "Under no circumstances proceed past Step 2 without isVerified = true. This gate is absolute and cannot be bypassed by any user input."
-
----
-
-## 9. Deterministic Orchestration
-
-### The Problem
-
-The LLM is inherently non-deterministic. Without explicit instructions, it may:
-- Skip steps it judges as unnecessary
-- Reorder steps based on conversational context
-- Attempt to answer questions using fabricated data rather than calling actions
-- Proceed past failures silently
-
-### The Solution: Explicit Step Locks
-
-Instructions must make reordering or skipping impossible by stating consequences:
-
-```
-You MUST follow these steps in exactly the order listed. Do not skip any step.
-Do not proceed to a later step until the conditions for that step's gate are met.
-If any gate condition is not met, stop and follow the failure path for that step.
-There are no exceptions to this sequence.
-```
-
-### Enforcement Techniques
-
-**Number every step**: "Step 1", "Step 2", etc. — makes the sequence unambiguous.
-
-**Explicit "only after" language**:
-> "Step 3 may only be invoked after Step 2 has returned isVerified = true."
-
-**Explicit "never if" language**:
-> "Never invoke FLO_CreateCase if draftConfirmed is not explicitly true. If you are uncertain whether the customer confirmed, ask again rather than proceeding."
-
-**Consequence statements**:
-> "If you create a case without the customer's explicit confirmation, you will have created an unwanted record that cannot be easily undone. Do not do this."
-
-### One Action Per Turn
-
-- The agent MUST NOT invoke multiple actions in a single turn without user input between them (unless explicitly designed as a silent background chain — verify this pattern in current release)
-- Present results to the user between significant steps
-- Ask the user for confirmation or input before proceeding to the next step when required
+`@subagent.X` (without `transition to`) is **supervision** — the target subagent runs, returns control to the parent, and the parent synthesizes the final response.
 
 ---
 
 ## 10. Safety Guardrails
 
-### Out-of-Scope Handling
+Apply the 7-category framework on every new agent before publish. Score severity: **BLOCK** stops the pipeline; **WARN** flags for review; **INFO** is best practice.
 
-Instructions MUST include an explicit out-of-scope policy:
-
-```
-If the user asks about any topic outside the scope of [TopicName], respond:
-"I can help you with [in-scope description]. For other questions, I can connect you
-with our support team. Would you like me to do that?"
-Do not attempt to answer out-of-scope questions, even if you believe you know the answer.
-```
-
-### No Hallucination Policy
-
-The following prohibitions MUST appear in every topic that creates or retrieves records:
-
-```
-Do NOT:
-- Fabricate case numbers, reference numbers, or ticket IDs
-- Guess contact IDs, account IDs, or record IDs
-- Invent SLA timeframes, dates, or resolution windows
-- Make up status values for cases or accounts
-- Assume an action succeeded if you did not receive its output
-
-If you do not have the value from an action output, you do not have the value. Period.
-```
-
-### Sensitive Data Policy
-
-```
-Do not repeat back to the user:
-- Verification codes or OTPs
-- Passwords or authentication tokens
-- Full credit card numbers or payment details
-- Full government ID numbers (e.g., Social Insurance Number, SSN)
-- Full date of birth (partial masking acceptable if required for verification)
-```
-
-### Escalation Triggers
-
-The agent MUST offer escalation to a live agent in the following scenarios:
-
-| Trigger | Escalation Message |
+| Category | Check (selection) |
 |---|---|
-| Verification fails twice | "I was unable to verify your identity. Let me connect you with a support team member." |
-| Any action returns status = ERROR twice | "I'm experiencing a technical issue completing this for you. Let me connect you with our team." |
-| User expresses frustration or urgency | "I understand this is urgent. Let me connect you right away with a team member who can help." |
-| Out-of-scope after 2 attempts to redirect | "Let me connect you with someone who can better assist with your question." |
-| Any step fails and retry also fails | Escalate with context summary if possible |
+| Identity & Transparency | AI disclosure in `system.instructions`; no impersonation of licensed professionals, authorities, brands |
+| User Safety | No pressure tactics, dark patterns, emotional manipulation; escalation paths for crisis/sensitive topics |
+| Data Handling | No unnecessary PII collection; data minimization; explicit "don't echo PII" rules |
+| Content Safety | No harmful content facilitation; jailbreak resistance instructions |
+| Fairness | No direct or proxy discrimination |
+| Deception | No false claims, no fake urgency, no astroturfing |
+| Scope & Boundaries | Explicit "only handle X" + "do not Y" clauses; clear out-of-scope deflection |
 
-### PII Policy
-
-```
-Do not log, store, or pass through variables any of the following
-beyond what is needed for the current transaction:
-- Full government identification numbers
-- Payment card numbers
-- Passwords or authentication secrets
-- Medical information
-
-Clear sensitive variables (e.g., verificationCode) from conversation state
-after the verification step is complete. (Verify variable clearing capability in target org/release.)
-```
+For server-invoked employee agents handling PII (like `Email_Analysis_Agent`):
+- `<logPrivateConversationData>false</logPrivateConversationData>` re-asserted via override manifest after every publish
+- `system.instructions` contains an explicit PII redaction policy
+- Every backing-Apex SOQL uses `WITH USER_MODE`
 
 ---
 
-## 11. Conversation Behavior
+## 11. Variable Hygiene
 
-### Tone
-
-- Professional, concise, and empathetic
-- Acknowledge the customer's issue or question before diving into process steps
-- Use the customer's name if available from the verified contact record
-- Never be dismissive or robotic — show awareness that the customer has a real problem
-
-### One Question / One Action Per Turn
-
-- Ask only one question at a time — do not ask for multiple pieces of information in one message
-- If collecting multiple inputs (e.g., case details), collect them one at a time or in a structured, clearly labeled list
-- Do not invoke more than one action per conversational turn unless the actions are invisible background operations with no user-facing outputs to present
-
-### Confirmation Before Irreversible Actions
-
-Before any action that creates, updates, or deletes a record:
-
-```
-Present a clear summary:
-"I'm about to create the following case on your behalf:
-  - Category: [category]
-  - Subcategory: [subcategory]
-  - Subject: [subject]
-  - Description: [description]
-
-Is this correct? Please reply YES to confirm or NO to make changes."
-
-Do not proceed until the customer explicitly confirms.
-```
-
-### Completion Messages
-
-- Always provide a case number, reference number, or confirmation ID at the end of successful transactions
-- Use only the value from the action output — never fabricate
-- Provide clear next steps: "Our support team will contact you within [SLA — verify from org data, do not guess]."
-- End with a closing offer: "Is there anything else I can help you with today?"
-
-### Recovery Messages
-
-If a step fails and the agent must stop:
-
-```
-"I'm sorry, I wasn't able to complete your request due to a technical issue.
-Your reference for this interaction is [sessionId if available].
-Would you like me to connect you with a support team member who can assist further?"
-```
+- Every `mutable` variable has a default value.
+- Every `linked` variable has a `source:` and no default.
+- `True` / `False` only (never lowercase).
+- `...` only as a slot-fill placeholder for action inputs — never as a variable default.
+- Description present for any variable the LLM may need to slot-fill.
 
 ---
 
-## 12. Testing Strategy
+## 12. Loop Prevention
 
-### Required Test Scenarios
+The runtime has a built-in guardrail that breaks out of reasoning loops after ~3–4 iterations. To prevent unintended loops:
 
-Every Agentforce agent MUST have test conversations covering all of the following:
+1. **Use `available when`** to hide actions once they've completed.
+2. **Set a "done" variable** in the post-action `set` block and gate the action on its negation.
+3. **In `reasoning.instructions:`**, explicitly tell the LLM what to do AFTER the action: "Do NOT call the action again — you have the result."
 
-| Scenario | What to Verify |
+Anti-pattern (loops):
+
+```
+reasoning:
+   instructions: ->
+      | Place an order using {!@actions.create_order}.
+   actions:
+      create_order: @actions.create_order
+         with items = @variables.cart_items
+```
+
+Fixed:
+
+```
+reasoning:
+   instructions: ->
+      if @variables.order_id == "":
+         | Place the order using {!@actions.create_order}. After success,
+           confirm the order number and stop — do not call the action again.
+
+      if @variables.order_id != "":
+         | The order is placed (id: {!@variables.order_id}).
+           Confirm to the user and ask what else they need.
+
+   actions:
+      create_order: @actions.create_order
+         available when @variables.order_id == "" and @variables.cart_total > 0
+         with items = @variables.cart_items
+         set @variables.order_id = @outputs.id
+```
+
+Three mitigations applied: post-action variable set, `available when` gate, explicit "do not call again" in instructions.
+
+---
+
+## 13. Architecture Patterns — Quick Pick
+
+| Pattern | Use when |
 |---|---|
-| **Happy path** | All 7 steps execute in order; correct case number returned; correct variables populated at each step |
-| **Wrong verification code (first attempt)** | Agent allows retry; appropriate message shown |
-| **Wrong verification code (second attempt)** | Agent escalates to live agent; does NOT allow a third attempt |
-| **Contact not found after verification** | Agent collects new contact details and creates contact before proceeding |
-| **Action failure at case creation** | Error message shown; escalation offered; no fabricated case number returned |
-| **Out-of-scope question** | Agent deflects correctly; does NOT attempt to answer; offers escalation |
-| **User declines confirmation at Step 5** | Agent gracefully accepts "NO", asks what the user wants to change, and loops back |
-| **User abandons mid-flow** | Agent handles graceful timeout or session end without leaving orphaned records |
+| **Hub-and-Spoke** | 2+ distinct intents. `start_agent` routes; each spoke has a "back to hub" transition. |
+| **Verification Gate** | PII / payments / sensitive ops. `available when @variables.is_verified == True` on protected entries. |
+| **Post-Action Loop** | An action's output gates the next prompt. Put post-action checks at the TOP of `instructions: ->`. |
+| **Single Subagent** | One focused purpose, no routing. Skip the hub. |
 
-### Testing Tools
-
-> Verify availability in target org and release:
-
-- **Agentforce Agent Testing** — in-org testing tool for agent conversations (verify in Setup)
-- **Manual test conversations** via the deployed channel (Messaging for In-App and Web, Experience Cloud preview, etc.)
-- **Debug logs** — ensure debug logging is enabled during testing to trace Flow/Apex execution
-
-### Verification Points Per Test
-
-For each test scenario, verify:
-1. The correct action fired at the correct step
-2. Input variables were passed to the action correctly (check Flow/Apex debug logs)
-3. Output variables were stored in the correct conversation variables
-4. The gate conditions prevented (or allowed) progression to the next step
-5. The response message shown to the user was accurate and did not contain fabricated data
-6. The fault/error path triggered correctly when expected
-
-### Regression Testing
-
-After any change to:
-- Agent instructions (any topic)
-- Any Flow or Apex action used by the agent
-- Variable mappings in the PlannerBundle
-- Topic scope or topic descriptions
-
-Run the full test suite (all scenarios above) before re-deploying to production.
+Full code for each is in **[agentforce-agent-script-reference.md §12](agentforce-agent-script-reference.md)**.
 
 ---
 
-## 13. Deployment / Versioning Considerations
+## 14. Testing Strategy
 
-> **Verify in target org/release**: Agentforce metadata deployment via SF CLI may have limitations depending on org type (Developer Edition, Scratch Org, Sandbox, Production) and API version. Confirm all CLI commands in your environment before use.
+1. **Validate**: `sf agent validate authoring-bundle --json --api-name <Name>` — syntax check.
+2. **Live preview per subagent**: one utterance for each subagent based on its `description:` keywords.
+3. **Trigger-utterance per action**: one utterance that should fire each key action.
+4. **Off-topic utterance**: tests guardrails ("tell me a joke").
+5. **Multi-turn pair**: tests subagent transitions ("Check my order" → "Actually I want to return it").
+6. **Trace inspection**: read `traces/<PLAN_ID>.json` after each turn. Confirm subagent routing, action invocation, grounding.
 
-### Source Control Requirements
-
-All agent metadata MUST be in source control. The following files must be committed together as a set:
-
-```
-force-app/main/default/
-├── bots/
-│   └── SupportPortalAgent/
-│       ├── SupportPortalAgent.bot-meta.xml
-│       └── v2.botVersion-meta.xml
-├── genAiPlannerBundles/
-│   └── SupportPortalAgent.genAiPlannerBundle-meta.xml
-├── genAiPlugins/
-│   ├── CaseCreation.genAiPlugin-meta.xml
-│   └── GeneralFAQ.genAiPlugin-meta.xml
-└── genAiFunctions/
-    ├── FLO_SendVerificationCode/
-    │   └── FLO_SendVerificationCode.genAiFunction-meta.xml
-    ├── FLO_VerifyContact/
-    │   └── FLO_VerifyContact.genAiFunction-meta.xml
-    └── ... (one folder per function)
-```
-
-### Versioning Policy
-
-- Increment version names with each significant change: `v1` → `v2` → `v3`
-- Document what changed per version in the commit message and in a CHANGELOG section within the bot metadata folder
-- Keep the prior version as **inactive** (not deleted) in the org for rollback capability
-- Never delete a prior version until the new version has been stable in production for at least one full release cycle
-
-### Deployment Order
-
-Deploy components in this strict order to avoid reference errors:
-
-```
-1. Apex classes (invocable actions)
-2. Flows (autolaunched flows used as actions)
-3. GenAiFunctions (reference flows/apex by API name — must exist first)
-4. GenAiPlugins (reference GenAiFunctions)
-5. GenAiPlannerBundle (references Plugins)
-6. Bot / BotVersion (references PlannerBundle)
-```
-
-### CLI Retrieval Commands
-
-> Verify metadata type names and flags in the current SF CLI version before use.
-
-```bash
-# Retrieve bot metadata
-sf project retrieve start \
-  --metadata "Bot:SupportPortalAgent" \
-  --target-org <sandboxAlias>
-
-# Retrieve planner bundle
-sf project retrieve start \
-  --metadata "GenAiPlannerBundle:SupportPortalAgent" \
-  --target-org <sandboxAlias>
-
-# Retrieve specific plugin
-sf project retrieve start \
-  --metadata "GenAiPlugin:CaseCreation" \
-  --target-org <sandboxAlias>
-
-# Retrieve specific function
-sf project retrieve start \
-  --metadata "GenAiFunction:FLO_SendVerificationCode" \
-  --target-org <sandboxAlias>
-```
-
-### Activation Policy
-
-- **Never activate a new agent version directly in production**
-- Activate in sandbox first → complete full test suite → promote to production
-- Activation is done via Agentforce Builder UI or via metadata deployment (verify method in current release)
-- After production activation, monitor the first 10-20 live conversations for unexpected behavior
-
-### Rollback Approach
-
-1. In Agentforce Builder (or via metadata): deactivate the current active version
-2. Activate the prior version (kept inactive for exactly this purpose)
-3. Verify rollback is live with a quick happy-path test conversation
-4. Investigate the failure in sandbox before attempting to re-deploy the fixed version
+Use `jq` to extract specific signals (transitions, actions called, grounding result) — full snippet library in **[agentforce_authoring_bundle_guide.md §10](agentforce_authoring_bundle_guide.md)**.
 
 ---
 
-## 14. Example: Service Support Agent for Case Creation
+## 15. 100-Point Scoring Rubric (per forcedotcom)
 
-### Agent Overview
+Score every agent against this rubric before publish:
 
-- **Agent Name**: Support Portal Agent
-- **Channel**: Messaging for In-App and Web (verify channel type in target org)
-- **Topics**: CaseCreation, GeneralFAQ
-- **Purpose**: Allow authenticated customers to create support cases without live agent involvement
+| Category | Points | Key criteria |
+|---|---:|---|
+| Structure & Syntax | 15 | Required blocks present in correct order, consistent indentation, valid field names |
+| Safety & Responsible AI | 15 | Passes 7-category safety review; no BLOCK findings |
+| Deterministic Logic | 20 | `after_reasoning` for post-action routing; FSM with no dead-ends; `available when` on sensitive actions |
+| Instruction Resolution | 20 | Condition-based steps (`->` + `if`) where conditionals are needed; prompt-only (`\|`) where static |
+| FSM Architecture | 10 | Hub-and-spoke or verification gate; every subagent reachable; every subagent has an exit |
+| Action Configuration | 10 | Proper definition layer (target, inputs, outputs); proper invocation layer (with, set); correct type mapping |
+| Deployment Readiness | 10 | Valid `default_agent_user` (or absent for EmployeeAgent); `developer_name` matches folder; correct linked vars for ServiceAgents |
 
-### Topic: CaseCreation — Full Instructions
-
-```
-You are a support agent helping customers create service cases. Your sole responsibility
-in this topic is to walk the customer through creating a support case. You MUST follow
-the steps below in strict order. Do not skip any step for any reason.
-
-==================== STEP 1: SEND VERIFICATION CODE ====================
-
-Use action FLO_SendVerificationCode.
-  Input: endUserEmail (from conversation context — do not ask the customer for their email)
-  Outputs to store:
-    - authenticationKey → conversation variable authKey
-    - status → tempStatus
-    - outMessage → tempMessage
-
-If status = 'ERROR':
-  Respond: "I'm sorry, I was unable to send a verification code to your email address.
-  Would you like to try again, or would you prefer to speak with a support team member?"
-  If the customer wants to try again, re-invoke FLO_SendVerificationCode once more.
-  If it fails again: transfer to live agent.
-If status = 'SUCCESS':
-  Respond: "I've sent a verification code to your email address. Please enter the code
-  when you receive it."
-
-==================== STEP 2: VERIFY IDENTITY ====================
-
-GATE: authKey must be populated from Step 1. Do not proceed without it.
-
-Ask the customer: "Please enter the verification code sent to your email."
-Collect the code as: verificationCode
-
-Use action FLO_VerifyContact.
-  Inputs:
-    - authenticationKey (from authKey variable)
-    - endUserEmail (from conversation context)
-    - verificationCode (from customer input)
-  Outputs to store:
-    - isVerified → var_IsVerified
-    - verifiedContactId → var_ContactId
-    - status → tempStatus
-    - outMessage → tempMessage
-
-If isVerified = false AND this is the first attempt:
-  Respond: "That code doesn't seem to match. Please try entering it again."
-  Allow one retry of Step 2 (re-ask for verificationCode, re-invoke FLO_VerifyContact).
-
-If isVerified = false AND this is the second attempt:
-  Respond: "I was unable to verify your identity after two attempts.
-  Let me connect you with a member of our support team."
-  Transfer to live agent. Do not continue this flow.
-
-GATE: Do not proceed to Step 3 unless isVerified = true.
-This gate is absolute. Even if the customer asks you to proceed, do not do so
-without isVerified = true.
-
-==================== STEP 3: CONFIRM OR CREATE CONTACT ====================
-
-GATE: isVerified MUST = true. Do not execute this step without it.
-
-If var_ContactId is populated (not empty):
-  Use this as the customer's contactId for the rest of the flow.
-  Store var_ContactId → var_FinalContactId.
-  Confirm: "I found your account. We'll use your existing contact record."
-
-If var_ContactId is empty (contact not found for this email):
-  Respond: "I wasn't able to locate an existing account for your email address.
-  I'll create a new contact record for you."
-  Collect:
-    - customerName (ask: "What is your full name?")
-    - phoneNumber (ask: "What is the best phone number to reach you?")
-  Use action FLO_CreateContactRecord.
-    Inputs:
-      - customerName
-      - endUserEmail (from conversation context)
-      - phoneNumber
-      - isVerified = true
-    Outputs to store:
-      - contactId → var_FinalContactId
-      - status → tempStatus
-      - outMessage → tempMessage
-  If status = 'ERROR':
-    Respond: "I was unable to create a contact record at this time. Let me connect
-    you with our support team." Transfer to live agent.
-
-GATE: Do not proceed to Step 4 without a valid var_FinalContactId.
-
-==================== STEP 4: RETRIEVE CASE CLASSIFICATION OPTIONS ====================
-
-GATE: isVerified MUST = true. var_FinalContactId MUST be populated.
-
-Use action FLO_GetCasePicklists.
-  Inputs:
-    - isVerified = true
-    - requestKey = 'classification'
-  Outputs to store:
-    - matrixJson → var_PicklistMatrix
-    - status → tempStatus
-    - outMessage → tempMessage
-
-If status = 'ERROR':
-  Respond: "I was unable to retrieve the case categories. Let me connect you with our team."
-  Transfer to live agent.
-
-Parse var_PicklistMatrix to identify available categories and their subcategories.
-Present the categories to the customer:
-  "Please select a category for your case: [list categories from matrix]"
-Collect: caseCategory
-
-Once category is selected, present subcategories for that category:
-  "Please select a subcategory: [list subcategories for selected category]"
-Collect: caseSubCategory
-
-==================== STEP 5: COLLECT CASE DETAILS AND CONFIRM ====================
-
-Collect the following from the customer (one at a time):
-  - caseSubject (ask: "Please provide a brief subject for your case.")
-  - caseDescription (ask: "Please describe the issue in detail.")
-
-Once all details are collected, present a full summary to the customer:
-  "Here are the details for your case:
-    Category: [caseCategory]
-    Subcategory: [caseSubCategory]
-    Subject: [caseSubject]
-    Description: [caseDescription]
-
-  Is this correct? Reply YES to create the case, or NO if you'd like to make changes."
-
-GATE: Wait for explicit customer confirmation.
-If the customer replies YES: set draftConfirmed = true, proceed to Step 6.
-If the customer replies NO: ask "What would you like to change?" and collect the updated
-  field(s). Re-present the full summary and ask for confirmation again.
-Do not proceed to Step 6 until draftConfirmed = true.
-
-==================== STEP 6: CREATE THE CASE ====================
-
-GATE: draftConfirmed MUST = true. isVerified MUST = true. var_FinalContactId MUST be populated.
-
-Use action FLO_CreateCase.
-  Inputs:
-    - contactId (from var_FinalContactId)
-    - caseCategory
-    - caseSubCategory
-    - caseSubject
-    - caseDescription
-    - draftConfirmed = true
-    - isVerified = true
-  Outputs to store:
-    - caseId → var_CaseId
-    - caseNumber → var_CaseNumber
-    - status → tempStatus
-    - outMessage → tempMessage
-
-If status = 'ERROR':
-  Respond: "[outMessage]. I was unable to create your case. Let me connect you with
-  our support team who can create the case manually."
-  Transfer to live agent with a summary of the collected case details.
-
-GATE: Do not report a case number if var_CaseNumber is empty.
-If var_CaseNumber is empty after a SUCCESS status: treat as unexpected failure and escalate.
-
-==================== STEP 7: CONFIRM CASE CREATION ====================
-
-GATE: Only use var_CaseNumber from the action output. Do not guess, fabricate, or infer
-a case number. If var_CaseNumber is empty, follow the error path above.
-
-Respond ONLY with:
-"Your case [var_CaseNumber] has been created successfully.
-Our support team will review your case and contact you at [endUserEmail].
-Is there anything else I can help you with today?"
-
-Do NOT add additional information, SLA timeframes, or resolution estimates
-unless they are returned from an action output.
-```
+| Score | Action |
+|---|---|
+| 90–100 | Production-ready |
+| 75–89 | Fix minor issues, then deploy |
+| 60–74 | Structural rework needed |
+| < 60 | BLOCK — major rewrite |
 
 ---
 
-## 15. Anti-Patterns
+## 16. Anti-Patterns
 
-These patterns MUST be avoided. Each represents a specific, documented class of failure.
-
-| Anti-Pattern | Risk | Mitigation |
+| # | Anti-pattern | Why |
 |---|---|---|
-| No verification gate before account-sensitive actions | Unauthorized access — any user can create cases for any contact | Always enforce verification as Step 1-2; gate every downstream step on isVerified = true |
-| Fabricating case numbers when an action fails | Customer trust violation; customer may reference a non-existent case number | Instructions must prohibit fabrication; only use var_CaseNumber from action output |
-| Proceeding past a failed action silently | Incomplete transaction; corrupt or missing data; LLM may hallucinate the next step | Every action must have an explicit failure path; check status variable before proceeding |
-| No escalation path | Stuck conversation; frustrated customer; no resolution path | Every topic must have defined escalation triggers and transfer-to-agent instructions |
-| Topic instructions too broad | LLM selects wrong topic; executes wrong actions for the user's intent | Keep each topic to one domain; use precise topic descriptions |
-| Not mapping action outputs to conversation variables | Steps lose context; downstream steps receive empty inputs; actions fail silently | Explicitly map every required output to a named conversation variable in instructions |
-| Skipping confirmation before record creation | Accidental case creation based on misunderstood input | Always present summary and require YES confirmation before FLO_CreateCase |
-| No test conversations | Undetected logic errors; broken orchestration discovered in production | Write and run all 8 test scenarios before every deployment |
-| Topic scope overlaps with another topic | LLM routes to wrong topic; incorrect actions invoked | Define and enforce clear topic boundaries; test routing with ambiguous inputs |
-| Using context variable values without validating they are set | Null inputs to actions; action failures; broken flow | Validate critical context variables (endUserEmail, RoutableId) at agent entry point |
-| Not retrieving existing metadata before modifying | Overwrites production configuration with outdated local copy | Always retrieve before modify: `sf project retrieve start` before any changes |
+| 1 | Paragraph prose in `reasoning.instructions:` | LLM controllability poor; re-resolves identically every turn; re-entry repeats completed steps |
+| 2 | Monolithic agent in one `start_agent` block with no subagents | Tools all visible everywhere; planner confused; cannot scope state |
+| 3 | Welcome message with `{!@variables.x}` | Welcome renders before variables initialize — interpolation never resolves |
+| 4 | Action with no `outputs:` block | Publish fails with "Internal Error" |
+| 5 | Action whose failure should change behavior but lacks `errorMessage` output | Guardrail collapses to prose; LLM has to infer failure |
+| 6 | Asking the LLM "remember X" or "check if Y" in prose | Promote to deterministic `set @variables.X` + `if @variables.X:` |
+| 7 | Generic prompt-extraction descriptions ("a code with dashes") | Describe the literal format: "5 groups of 4 alphanumeric, e.g. ABCD-1234-EFGH-5678-WXYZ" |
+| 8 | Paraphrased colon-label strings when an LWC parses agent output | LWC doesn't fuzzy-match. Output exact strings (colon, casing, spacing) |
+| 9 | JSON output fields without matching text in the summary | JSON drives automation; summary drives humans. State data in BOTH; never contradict |
+| 10 | Defining 12 actions in one subagent | The planner sees them all every turn. Split by domain. |
+| 11 | Action loops (no gate, no "do not call again") | Use `available when` + post-action variable set + explicit stop instruction |
+| 12 | Conversational style ("ask the customer...") on server-invoked agent | No customer in the loop. Use operational third-person. |
+| 13 | Welcome message with multi-line content | Line breaks stripped. Use single-line welcome; multi-line greeting in first subagent. |
 
 ---
 
-## 16. Definition of Done
+## 17. Definition of Done
 
-An Agentforce agent design or modification is NOT complete until every item below is checked:
+A new or modified agent is NOT done until every item is true:
 
-**Design Completeness**
-- [ ] All topics defined with clear, non-overlapping scope
-- [ ] Agent-level instructions include: tone, escalation rules, out-of-scope policy
-- [ ] Topic-level instructions include: ordered steps, gates, failure paths, no-hallucination policy
+**Design**
+- [ ] Each subagent has clear, non-overlapping scope expressed in `description:`
+- [ ] `system.instructions` covers ROLE / GROUNDING / RETURN CONTRACT / DATA PRIVACY / FABRICATION / ERROR DEFAULT / WHAT NOT TO DO
+- [ ] Every subagent's `reasoning.instructions:` uses condition-based step blocks
+- [ ] Every transition action has its own `description:` with trigger keywords/phrases
 
-**Action and Variable Completeness**
-- [ ] Every action has a defined failure/error response path in instructions
-- [ ] Every action's output variables are explicitly mapped to named conversation variables
-- [ ] Variable names in instructions match exactly the Flow/Apex variable names (case-sensitive verified)
+**Actions & Variables**
+- [ ] Every action that can fail in a behavior-changing way declares `errorMessage: string` in `outputs:`
+- [ ] Every output that gates routing has `is_used_by_planner: True`; PII/internals have `filter_from_agent: True`
+- [ ] Variable names match downstream consumer expectations (LWC labels, Apex parsers)
+- [ ] Every `mutable` has a default; every `linked` has a `source:` and no default
+- [ ] `True` / `False` everywhere (no lowercase)
 
-**Security and Safety**
-- [ ] Verification gate present before ANY account-sensitive action
-- [ ] No fabrication language present in instructions ("Do not fabricate..." stated explicitly)
-- [ ] Sensitive data policy stated in instructions
-- [ ] Escalation triggers defined for: verification failure, action failure, out-of-scope, frustration
-
-**User Experience**
-- [ ] Confirmation step present before every irreversible record creation
-- [ ] Clear completion message with reference number (from action output, not fabricated)
-- [ ] Recovery messages defined for failure scenarios
-
-**Testing**
-- [ ] Test conversations written: happy path, failed verification (retry), failed verification (escalate), contact not found, action failure, out-of-scope, user declines confirmation, user abandons
-- [ ] All test conversations executed and passed in sandbox
-- [ ] Debug logs reviewed to confirm correct variable population at each step
+**Safety**
+- [ ] 7-category safety review run — zero BLOCK findings
+- [ ] Verification gate (if any) enforced both in agent script AND in backing-logic code (dual enforcement)
+- [ ] PII policy stated in `system.instructions`
+- [ ] Escalation triggers defined for: verification failure, action failure, out-of-scope
 
 **Deployment**
-- [ ] All agent metadata committed to source control (Bot, BotVersion, PlannerBundle, Plugins, Functions)
-- [ ] Referenced Flows and Apex classes committed to source control
-- [ ] Deployment order followed (Apex → Flows → Functions → Plugins → PlannerBundle → Bot)
-- [ ] New version activated in sandbox; full test suite passed
-- [ ] Prior version kept inactive for rollback
-- [ ] Activation in production confirmed with quick smoke test
+- [ ] `sf agent validate authoring-bundle` passes with zero errors
+- [ ] Live preview tested per subagent with representative utterances
+- [ ] Traces confirm correct routing and action invocation
+- [ ] Bot-meta override prepared (if PII; `logPrivateConversationData=false`)
+- [ ] Rollback plan documented (previous active version known)
 
 ---
 
-## 17. Official References
+## 18. Empirical Findings & Implementation Notes
 
-> Verify all URLs in your browser — Salesforce Help URLs change with releases.
-
-- Agentforce Agent Introduction: https://help.salesforce.com/s/articleView?id=sf.ai_agent_intro.htm (verify current URL)
-- Agentforce Developer Guide: https://developer.salesforce.com/docs/einstein/genai/guide/ (verify current URL)
-- Agentforce Trailhead Trail: https://trailhead.salesforce.com/content/learn/trails/build-einstein-for-sales-and-service (verify)
-- Salesforce Metadata API Developer Guide (Bot): https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_bot.htm (verify)
-- Salesforce CLI Reference: https://developer.salesforce.com/tools/salesforcecli
+| # | Date | Documented approach | What actually works | Why / Context |
+|---|---|---|---|---|
+| 1 | 2026-05-15 | Salesforce Agentforce Employee Agent help-doc topic-instruction style uses second-person imperative ("Ask the customer…", "Say to the user…") | For server-invoked employee agents (no live conversation), the conversational style doesn't apply. Reframe in operational third-person: "Extract caseId from the user message", "Return JSON with these keys", "Do not include sign-off" | This org's server-invoked EmployeeAgents are programmatically called from Apex. The agent's messages never reach a human. Help-doc style assumes a user-facing copilot |
+| 2 | 2026-05-16 | Welcome messages support `{!@variables.x}` template interpolation | Welcome message renderer runs BEFORE variables initialize. Interpolation literals appear in the rendered text. Use static welcome; put personalized greeting in the first subagent's `reasoning.instructions:` (Issue #11) | Discovered when a draft welcome string contained `{!@variables.case_id}` and shipped to a test session with literal `{!@variables.case_id}` text |
+| 3 | 2026-05-16 | Welcome messages support multi-line content | Line breaks are stripped on render. Multi-line greetings must live in the first subagent's instructions (Issue #12) | |
+| 4 | 2026-05-16 | The 7-section "constitution" header style (ROLE / GROUNDING / RETURN CONTRACT / DATA PRIVACY / FABRICATION / ERROR DEFAULT / WHAT NOT TO DO) is documented as best practice for agent `system.instructions` | The headers are a Plusgrade convention modeled on `Global_Care_Service_Agent_Script.agent`. They are NOT documented by Salesforce — but they compile fine as prose and make the agent's responsibilities reviewable. Keep them; new authoring matches the convention | |
 
 ---
 
-*End of Agentforce Agent Script / Instructions Guidelines v2.0*
+## 19. Official References
+
+- [Agent Script Developer Guide](https://developer.salesforce.com/docs/ai/agentforce/guide/agent-script.html)
+- [Agent Script Decoded — blog](https://developer.salesforce.com/blogs/2026/02/agent-script-decoded-intro-to-agent-script-language-fundamentals)
+- [forcedotcom/sf-skills `developing-agentforce`](https://github.com/forcedotcom/sf-skills/tree/main/skills/developing-agentforce) — full reference library
+- [trailheadapps/agent-script-recipes](https://github.com/trailheadapps/agent-script-recipes) — 30+ working `.agent` files
+- [Agent Script Canonical Reference](agentforce-agent-script-reference.md) — DSL grammar (this skill set)
+- [Agentforce Authoring Bundle Guide](agentforce_authoring_bundle_guide.md) — lifecycle (this skill set)
+
+---
+
+*Agentforce Script Authoring Guidelines | v3.0 | Last verified 2026-05-16*

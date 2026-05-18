@@ -1,520 +1,499 @@
 # Prompt Builder Template Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Guidelines for Salesforce Prompt Builder prompt templates. Attach when designing, creating, or reviewing Einstein Prompt Builder templates.
+Authoritative reference for `GenAiPromptTemplate` metadata, Prompt Builder authoring, and Agentforce consumption of prompt templates in this project. Companion to `agentforce-agent-script-reference.md` (which is the source of truth for how `.agent` files invoke prompt templates).
 
-> Prompt Builder and Einstein generative AI features are evolving rapidly. Verify feature availability, merge field syntax, and grounding capabilities in your target org and release before implementing.
+**Verified against:** Salesforce Metadata API `GenAiPromptTemplate` element (`force-app/main/default/genAiPromptTemplates/*.genAiPromptTemplate-meta.xml`), Einstein Trust Layer audit log, Prompt Builder UI in Spring '26 (API v66.0), and the Agent Script convention for prompt-backed actions documented in `agentforce-agent-script-reference.md` §9. Last verified 2026-05-16.
 
----
-
-## Table of Contents
-
-1. [Required Agent Output Contract](#1-required-agent-output-contract)
-2. [What Prompt Builder Does](#2-what-prompt-builder-does)
-3. [Template Types](#3-template-types)
-4. [Grounding](#4-grounding)
-5. [Merge Fields](#5-merge-fields)
-6. [Flows / Apex for Prompt Inputs](#6-flows--apex-for-prompt-inputs)
-7. [Logging Limitations](#7-logging-limitations)
-8. [When Prompt Templates Are Not Enough vs Agentforce](#8-when-prompt-templates-are-not-enough-vs-agentforce)
-9. [Safety](#9-safety)
-10. [Deterministic Output Formatting](#10-deterministic-output-formatting)
-11. [Testing / Evaluation](#11-testing--evaluation)
-12. [Common AI Mistakes to Avoid](#12-common-ai-mistakes-to-avoid)
-13. [Definition of Done](#13-definition-of-done)
-14. [Official References](#14-official-references)
+> **Direct doc fetch limitation (Empirical Finding #5 in `agentforce-agent-script-reference.md`):** `help.salesforce.com` renders via JavaScript and returns CSS errors to WebFetch; many `developer.salesforce.com/docs/einstein/genai/guide/*` paths have shifted between releases and currently 404. Ground truth for the metadata schema lives in retrieved `.genAiPromptTemplate-meta.xml` files under `force-app/main/default/genAiPromptTemplates/` and in the canonical Agent Script reference (§9 "Prompt-template actions are different").
 
 ---
 
-## 1. Required Agent Output Contract
+## 1. File Layout
 
-When generating or modifying a Prompt Builder template, the AI agent MUST produce:
-
-### 1.1 Template Type and Context
+A prompt template is a single metadata file under:
 
 ```
-Template Type: Field Generation / Record Summary / Sales Email / Custom
-Object Context: Case
-Target Field (if Field Generation): Case.AI_Summary__c
-Trigger/Use Context: Summarize Case on record load; triggered from Quick Action
+force-app/main/default/genAiPromptTemplates/<Template_API_Name>.genAiPromptTemplate-meta.xml
 ```
 
-### 1.2 Grounding Data Sources
+There is no `.cls` or sibling — the entire template (prompt body, inputs, capabilities, type, masking, versions) lives in the one XML file. Apex capabilities the template depends on live separately under `force-app/main/default/classes/` and **must deploy before** the template that references them.
 
-List every data source being fed into the prompt:
-
-```
-Grounding Sources:
-- Case.Subject (merge field)
-- Case.Description (merge field)
-- Case.Status (merge field)
-- Case.Priority (merge field)
-- Related: Last 5 Case Comments (related list grounding)
-- Apex Invocable: GetRelatedKnowledgeArticles (returns matching KB article titles)
-```
-
-### 1.3 Merge Fields
-
-List all merge fields used and their expected data:
-
-```
-{!$Record.Subject}          -> Case subject line
-{!$Record.Description}      -> Full case description
-{!$Record.Status}           -> Current status value
-{!CaseCommentsSummary}      -> Retrieved via Apex invocable
-```
-
-### 1.4 Test Inputs / Outputs
-
-Document test cases:
-
-```
-Test Case 1:
-  Input: Case with Subject="Login Error", Status="Open", Description="User cannot log in after password reset."
-  Expected Output: JSON with keys: summary, nextSteps, sentiment
-  
-Test Case 2:
-  Input: Case with empty Description
-  Expected Output: Graceful handling — summary field states "Insufficient information provided."
-```
-
-### 1.5 Safety Review
-
-- [ ] Safety instructions included in template
-- [ ] No PII-returning merge fields included in prompt (or confirmed PII handling is compliant)
-- [ ] Output format validated — no free-form text where structured data is expected
-- [ ] Hallucination test performed with edge-case record data
+**Critical:** The filename, the `developerName`/API name shown in Prompt Builder, and any agent action target `prompt://<Template_API_Name>` must match exactly (case-sensitive).
 
 ---
 
-## 2. What Prompt Builder Does
+## 2. `GenAiPromptTemplate` Metadata — Required Top-Level Order
 
-Salesforce Prompt Builder is a declarative tool that allows admins and developers to create **reusable, grounded prompt templates** that are sent to an LLM (Einstein or third-party via Model Builder) and whose outputs can populate record fields, generate email drafts, summarize records, or drive other AI-powered workflows.
-
-### Core Concepts
-
-| Concept | Description |
-|---|---|
-| **Template** | A structured prompt definition with placeholders (merge fields) for dynamic data |
-| **Merge Fields** | Placeholders in the template that are populated at runtime from Salesforce record data |
-| **Grounding** | Feeding real, org-specific data into the prompt context so the LLM responds based on actual record data |
-| **LLM / Model** | The AI model that processes the grounded prompt and generates output (Einstein, OpenAI, etc.) |
-| **Output** | The text or structured data returned by the LLM; can write to a field, generate an email, etc. |
-
-### What It Is NOT
-
-- Not a conversational agent (no multi-turn conversation).
-- Not capable of taking autonomous actions (no tool calls, no record updates — output must be applied by a Flow or user).
-- Not a replacement for Agentforce for multi-step or decision-making workflows.
-
----
-
-## 3. Template Types
-
-> **Important**: Template types available in your org depend on your Salesforce edition, add-ons, and release. Always verify which template types are enabled in your target org before designing a template.
-
-### 3.1 Field Generation
-
-- **Purpose**: Generate content for a specific record field.
-- **Example**: Generate a summary in `Case.AI_Summary__c` based on Case fields and related comments.
-- **Output**: Typically a single text value written to a field via a Flow.
-
-### 3.2 Record Summary
-
-- **Purpose**: Generate a comprehensive summary of a record for display in the UI.
-- **Example**: "Summarize this Account's recent activity and open opportunities."
-- **Output**: Text displayed in the Einstein Copilot panel or a custom UI component.
-
-### 3.3 Sales Email
-
-- **Purpose**: Draft a personalized sales email based on Opportunity, Contact, and Account data.
-- **Example**: Generate a follow-up email after a meeting logged in the Activity history.
-- **Output**: Email draft pre-populated in the email composer.
-
-### 3.4 Custom
-
-- **Purpose**: Any use case not covered by the above types.
-- **Example**: Generate a case deflection message, a risk assessment summary, a customer-facing FAQ answer.
-- **Output**: Text, JSON, or structured data depending on prompt instructions.
-
-### Template Type Summary Table
-
-| Type | Use Case | Typical Output |
+| Element | Required | Purpose |
 |---|---|---|
-| Field Generation | Populate a field with AI-generated content | Text value for a field |
-| Record Summary | Summarize a record for the user | Narrative text |
-| Sales Email | Draft outbound emails | Email body text |
-| Custom | Any other AI text generation | Text / JSON |
+| `<activeVersionIdentifier>` | Required (post-publish) | API name of the currently active version (e.g. `v3`). Drives which version Prompt Builder serves at runtime. |
+| `<description>` | Optional but strongly recommended | Human-readable purpose. Surfaces in Prompt Builder list view. |
+| `<masterLabel>` | Required | Display label in Prompt Builder UI. |
+| `<relatedEntity>` | Required for `flex`/`sales_email`/`field_generation`/`record_summary` | sObject API name the template is bound to (e.g. `Case`, `Opportunity`). |
+| `<templateVersions>` | One or more required | Each version is a self-contained snapshot: prompt body, inputs, capabilities, model. Adding a new version is how you iterate. |
+| `<type>` | Required | One of `einstein_gpt__sales_email`, `einstein_gpt__field_generation`, `einstein_gpt__record_summary`, `einstein_gpt__flex`. |
+| `<visibility>` | Required | `Global` or `Local`. `Global` makes the template invocable from Flow/Apex/Agentforce; `Local` restricts it to the Prompt Builder editor. |
+
+Minimal valid skeleton:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<GenAiPromptTemplate xmlns="http://soap.sforce.com/2006/04/metadata">
+    <activeVersionIdentifier>v1</activeVersionIdentifier>
+    <description>Generate a JSON case summary for the LWC parser</description>
+    <masterLabel>Case Summary Generator</masterLabel>
+    <relatedEntity>Case</relatedEntity>
+    <type>einstein_gpt__flex</type>
+    <visibility>Global</visibility>
+    <templateVersions>
+        <!-- one or more <GenAiPromptTemplateVersion> child blocks -->
+    </templateVersions>
+</GenAiPromptTemplate>
+```
 
 ---
 
-## 4. Grounding
+## 3. Template Types — What Each One Means
 
-### What Grounding Means
+| `<type>` value | Use when | Output shape | Agent-callable? |
+|---|---|---|---|
+| `einstein_gpt__flex` | Generic, agent-callable text generation. Default choice for Agentforce action targets. | Free-form string (you constrain shape via prompt instructions). | Yes — `prompt://` target. |
+| `einstein_gpt__field_generation` | Populating a single field on a record (Quick Action, Flow). | Single string for one field. | Indirectly (via Flow that writes the field). |
+| `einstein_gpt__record_summary` | "Summarize this record" Lightning component on a record page. | Narrative string. | No — Lightning panel only. |
+| `einstein_gpt__sales_email` | Drafting emails from the email composer on Opportunity/Lead/Contact. | Email subject + body. | Indirectly. |
 
-Grounding means including actual Salesforce data in the prompt context so the LLM generates responses based on real record information rather than hallucinating details. Without grounding, the LLM has no knowledge of your specific data.
+> **Agent target choice:** When an Agentforce agent calls a prompt template (`prompt://Template_API_Name`), it must be `einstein_gpt__flex` with `<visibility>Global</visibility>`. The other three types are surface-bound (composer, record page, Quick Action) and cannot be invoked as agent actions.
 
-### Grounding Mechanisms
+---
 
-| Mechanism | Description |
+## 4. `<templateVersions>` — The Versioned Payload
+
+Every prompt template has one or more `<GenAiPromptTemplateVersion>` children. The version listed in `<activeVersionIdentifier>` is what runs at runtime; other versions are dormant snapshots. **You never edit an active version in place — clone it, bump the identifier, edit, then flip `<activeVersionIdentifier>` to the new one.** This pattern is how Prompt Builder gives you safe iteration with rollback.
+
+```xml
+<templateVersions>
+    <content>You are a Salesforce support assistant...
+{!$Input:caseRecord.Subject}
+{!$Input:caseRecord.Description}
+Return JSON only.</content>
+    <inputs>
+        <apiName>caseRecord</apiName>
+        <definition>SOBJECT://Case</definition>
+        <description>The Case record to summarize</description>
+        <masterLabel>Case</masterLabel>
+        <referenceName>Input:caseRecord</referenceName>
+        <required>true</required>
+    </inputs>
+    <primaryModel>sfdc_ai__DefaultGPT4Omni</primaryModel>
+    <status>Published</status>
+    <versionIdentifier>v1</versionIdentifier>
+</templateVersions>
+```
+
+**Version block required children:**
+
+| Element | Purpose |
 |---|---|
-| **Merge Fields** | Pull values from record fields directly into the prompt text |
-| **Related List Grounding** | Pull a list of child records (e.g., last N Case Comments) into the prompt |
-| **Flow Inputs** | Compute and pass data that merge fields cannot fetch directly |
-| **Apex Invocable Inputs** | Run Apex to retrieve complex or computed data and pass as a prompt variable |
+| `<content>` | The prompt body. Merge-field syntax `{!$Input:name.Path}` for inputs, `{!$Input:name}` for scalar inputs. |
+| `<inputs>` | Zero or more — each defines one input variable (see §5). |
+| `<primaryModel>` | Model API name. Common values: `sfdc_ai__DefaultGPT4Omni`, `sfdc_ai__DefaultGPT4OmniMini`, `sfdc_ai__DefaultAnthropicClaude4Sonnet`, `sfdc_ai__DefaultOpenAIGPT5`. Models gated by org entitlement. |
+| `<status>` | `Draft` or `Published`. Only `Published` versions can be activated. |
+| `<versionIdentifier>` | Stable string (e.g. `v1`, `v2`). Referenced by `<activeVersionIdentifier>`. |
 
-### Example Grounded Prompt
-
-```
-You are a Salesforce support AI assistant. Your task is to summarize the following support case.
-
-Case Subject: {!$Record.Subject}
-Case Status: {!$Record.Status}
-Case Priority: {!$Record.Priority}
-Case Description:
-{!$Record.Description}
-
-Recent Case Comments:
-{!RecentCaseComments}
-
-Instructions:
-- Summarize the issue in 2-3 sentences.
-- List up to 3 suggested next steps.
-- Do not include personal identifying information in the output.
-- Only use information from the provided case data above.
-- If the description is empty, state: "Insufficient case information provided."
-
-Return your response as a JSON object with these exact keys:
-{
-  "summary": "<string>",
-  "nextSteps": ["<string>", "<string>", "<string>"],
-  "sentiment": "<Positive|Neutral|Negative>"
-}
-```
-
-### Grounding Token Budget
-
-Each model has a maximum context window (token limit). Grounding data consumes tokens. Rules:
-- Only include fields that are relevant to the task.
-- Truncate or summarize related list data — do not include all records if the list is large.
-- Monitor token usage in template preview; Prompt Builder may warn when nearing limits.
-- If data volume is too large, use an Apex invocable to pre-summarize before passing to the prompt.
+Optional children of a version: `<secondaryModel>` (fallback), `<temperature>` (decimal), `<maxTokens>` (integer), `<frequencyPenalty>`, `<presencePenalty>`, `<groundingDataSources>` (capabilities — see §6).
 
 ---
 
-## 5. Merge Fields
+## 5. `<inputs>` — Defining Template Variables
 
-### Syntax
+Every dynamic value you reference in `<content>` must be declared as an `<inputs>` block. The **`<referenceName>` is the merge-field identifier inside the prompt body and the wire-name when the template is called from Apex, Flow, or Agentforce.**
 
-> **Important**: The exact merge field syntax may vary by Salesforce release and template type. Always verify in your target org's Prompt Builder UI and official documentation.
-
-**General Pattern (verify in org)**:
+```xml
+<inputs>
+    <apiName>caseRecord</apiName>
+    <definition>SOBJECT://Case</definition>
+    <description>The Case to summarize</description>
+    <masterLabel>Case</masterLabel>
+    <referenceName>Input:caseRecord</referenceName>
+    <required>true</required>
+</inputs>
+<inputs>
+    <apiName>maxLines</apiName>
+    <definition>primitive://Integer</definition>
+    <description>Max number of bullet points</description>
+    <masterLabel>Max Lines</masterLabel>
+    <referenceName>Input:maxLines</referenceName>
+    <required>false</required>
+</inputs>
 ```
-{!$Record.FieldApiName}        -> Direct field on the current record
-{!$Record.RelatedObject__r.FieldApiName}  -> Field via lookup relationship
-```
 
-### Examples
+| Element | Required | Notes |
+|---|---|---|
+| `<apiName>` | Yes | Internal slug — must be unique within the version. |
+| `<definition>` | Yes | One of `SOBJECT://<APIName>`, `primitive://String`, `primitive://Integer`, `primitive://Decimal`, `primitive://Boolean`, `primitive://Date`, `primitive://DateTime`, or `apex://<ClassName>` for a custom Apex DTO. |
+| `<masterLabel>` | Yes | Display name in Prompt Builder. |
+| `<referenceName>` | Yes | **Must begin with `Input:`** — this is the prefix consumers use. `{!$Input:caseRecord.Subject}` in `<content>`; `"Input:caseRecord"` in an agent action `with` clause. |
+| `<required>` | Yes | `true`/`false`. Required inputs make the template fail-fast when missing. |
+| `<description>` | Optional | Surfaces to Prompt Builder authors and (for `Global` templates) to Agentforce planners. |
 
-```
-{!$Record.Subject}                          -> Case Subject
-{!$Record.Status}                           -> Case Status
-{!$Record.Account.Name}                     -> Account Name via lookup
-{!$Record.OwnerId}                          -> Owner ID (consider using Owner.Name)
-{!$Record.Owner.Name}                       -> Owner's name via relationship
-{!$Record.Custom_Field__c}                  -> Custom field
-```
+**Reference syntax inside `<content>`:**
 
-### Rules
+| Reference | Resolves to |
+|---|---|
+| `{!$Input:foo}` | Scalar primitive input named `foo` |
+| `{!$Input:caseRecord.Subject}` | Field on an sObject input |
+| `{!$Input:caseRecord.Account.Name}` | Field via one parent-relationship hop |
+| `{!$Input:caseRecord.Account.Owner.Email}` | Two relationship hops (depth-limited; verify in target org) |
+| `{!$Context.UserId}` | Running-user Id from the Trust Layer context |
+| `{!$Context.UserLocale}` | Running-user locale |
 
-- Always test merge fields in the Prompt Builder preview to confirm they resolve correctly.
-- Merge fields that resolve to null/empty should be handled in the prompt instructions (e.g., "If Description is empty, state...").
-- Do not include merge fields for sensitive/PII data unless the use case explicitly requires it and data handling is compliant.
-- Related list grounding may have a configurable record limit — document the limit in the template.
-
-### Computed Field Grounding
-
-For data that cannot be fetched via simple merge fields:
-1. Create an Apex invocable or Flow element that queries or computes the data.
-2. Pass the result as a prompt input variable.
-3. Reference the input variable in the template.
+Related-list traversal in pure merge syntax is limited — use a grounding capability (§6) when you need child-record aggregation, computed counts, or cross-object joins.
 
 ---
 
-## 6. Flows / Apex for Prompt Inputs
+## 6. Grounding via Capabilities — Apex and Flow
 
-### When to Use
+Capabilities provide **server-side data** to the template at runtime: things merge fields can't fetch (multi-hop SOQL, aggregations, external API data). The template declares a `<groundingDataSources>` entry that names the capability; at runtime Prompt Builder executes the capability, takes its output, and merges it into the prompt body via the capability's reference name.
 
-Use Apex invocables or Flow elements to provide prompt inputs when:
-- The required data spans multiple objects that merge fields cannot traverse in one hop.
-- The data requires aggregation or computation (e.g., "count of open cases this month").
-- A related list needs preprocessing (truncation, summarization) before inclusion in the prompt.
-- External system data needs to be fetched and passed into the prompt.
+### 6.1 Apex Capability — Invocable
 
-### Apex Invocable Example
+An Apex grounding capability is just an `@InvocableMethod`-decorated class with a defined input request and response.
 
 ```apex
 /**
- * Description: Retrieves related Knowledge article titles for a Case.
+ * Description: Provides recent Case comments for a Case grounding capability.
  * Developer: Naresh
  * Title: Senior Salesforce Developer
  */
-public with sharing class GetRelatedKnowledgeArticles {
+public with sharing class CaseRecentCommentsCapability {
 
     public class Request {
-        @InvocableVariable(label='Case ID' required=true)
+        @InvocableVariable(label='Case Id' required=true)
         public Id caseId;
     }
 
     public class Response {
-        @InvocableVariable(label='Article Titles Summary')
-        public String articleTitlesSummary;
+        @InvocableVariable(label='Recent Comments Block')
+        public String recentCommentsBlock;
     }
 
-    @InvocableMethod(label='Get Related Knowledge Articles' description='Returns a summary of related KB article titles for a Case.')
-    public static List<Response> getArticles(List<Request> requests) {
-        List<Response> responses = new List<Response>();
-        for (Request req : requests) {
-            List<CaseArticle> articles = [
-                SELECT KnowledgeArticle.Title
-                FROM CaseArticle
-                WHERE CaseId = :req.caseId
+    @InvocableMethod(
+        label='Case Recent Comments'
+        description='Returns up to 5 recent comments as a single block for prompt grounding.'
+        callout=false)
+    public static List<Response> exec(List<Request> reqs) {
+        List<Response> out = new List<Response>();
+        for (Request r : reqs) {
+            List<CaseComment> cs = [
+                SELECT CommentBody, CreatedDate
+                FROM CaseComment
+                WHERE ParentId = :r.caseId
                 WITH USER_MODE
+                ORDER BY CreatedDate DESC
                 LIMIT 5
             ];
-            List<String> titles = new List<String>();
-            for (CaseArticle ca : articles) {
-                titles.add(ca.KnowledgeArticle.Title);
+            List<String> lines = new List<String>();
+            for (CaseComment c : cs) {
+                lines.add('- ' + c.CreatedDate.format() + ': ' + c.CommentBody);
             }
-            Response res = new Response();
-            res.articleTitlesSummary = titles.isEmpty()
-                ? 'No related articles found.'
-                : String.join(titles, '; ');
-            responses.add(res);
+            Response resp = new Response();
+            resp.recentCommentsBlock = lines.isEmpty()
+                ? 'No prior comments.'
+                : String.join(lines, '\n');
+            out.add(resp);
         }
-        return responses;
+        return out;
     }
 }
 ```
 
-### Using the Invocable in a Prompt Template
+Bind it inside the template version:
 
-In the Prompt Builder template, configure the Apex invocable as an input:
-1. Add a "Flow / Apex Input" in the template configuration.
-2. Select the `GetRelatedKnowledgeArticles` invocable method.
-3. Map the Case record ID to `caseId` input.
-4. The output `articleTitlesSummary` becomes a variable in the template: `{!articleTitlesSummary}`.
-
----
-
-## 7. Logging Limitations
-
-### Known Limitation
-
-Prompt Builder does not automatically log:
-- The grounded prompt text sent to the LLM.
-- The LLM's raw output.
-- Which user triggered the prompt and when.
-
-This is a significant gap for audit, compliance, and debugging.
-
-### Recommended Approach
-
-Implement custom logging:
-
-1. Create a custom object `PromptLog__c` with fields:
-   - `Template_Name__c` (Text)
-   - `Record_Id__c` (Text)
-   - `User__c` (Lookup to User)
-   - `Timestamp__c` (DateTime)
-   - `Input_Summary__c` (Long Text Area — store a hash or summary, NOT the full prompt if it contains PII)
-   - `Output_Summary__c` (Long Text Area — store output or a hash)
-   - `Status__c` (Picklist: Success / Error)
-
-2. Trigger logging via the Flow that calls the prompt template — before and after the LLM call.
-
-3. **Do NOT log PII** in prompt variables or outputs. If the prompt processes PII-containing fields, log only metadata (record ID, template name, timestamp, status) — not the field values.
-
-### Compliance Note
-
-If your org handles regulated data (GDPR, HIPAA, SOC2), consult your legal/compliance team on:
-- Whether AI-generated outputs that reference regulated data must be logged.
-- Data residency requirements for LLM API calls.
-- Retention policy for any AI prompt logs.
-
----
-
-## 8. When Prompt Templates Are Not Enough vs Agentforce
-
-### Decision Table
-
-| Use Case | Tool |
-|---|---|
-| Generate a summary for a single record field | Prompt Builder (Field Generation template) |
-| Generate a draft email based on a record | Prompt Builder (Sales Email template) |
-| Summarize a record on-screen for the user | Prompt Builder (Record Summary template) |
-| Single-step text generation with record grounding | Prompt Builder |
-| Multi-step workflow: query data, make decisions, take actions | Agentforce (Einstein Agent) |
-| Conversational interaction where the user asks follow-up questions | Agentforce |
-| Agent that can call multiple tools, APIs, and Salesforce actions in sequence | Agentforce |
-| Autonomous monitoring and response (e.g., detect risk, send notification, update record) | Agentforce |
-| Real-time chat interface embedded in Experience Cloud | Agentforce |
-
-### Summary Rule
-
-- **Prompt Builder** = static, single-step, grounded text generation. Input → LLM → Output.
-- **Agentforce** = dynamic, multi-step, action-taking, conversational AI. Topic → Plan → Tool Calls → Response.
-
-Do not use Prompt Builder templates to simulate a multi-step agent by chaining prompts in Flows. If you find yourself doing this, evaluate Agentforce instead.
-
----
-
-## 9. Safety
-
-### Required Safety Instructions
-
-Every Prompt Builder template MUST include safety instructions within the prompt text itself. Do not assume the LLM will behave safely without explicit instructions.
-
-### Mandatory Safety Block
-
-Include this (or equivalent) in every template:
-
-```
-IMPORTANT INSTRUCTIONS:
-- Do not include personal identifying information (names, email addresses, phone numbers, addresses) in your response.
-- Only use information provided in the case data above. Do not invent or assume any details not present in the input.
-- Do not generate harmful, offensive, or misleading content.
-- If the input data is insufficient to generate a meaningful response, state clearly: "Insufficient information to generate a summary."
-- Do not reference any systems, companies, or people not mentioned in the provided data.
+```xml
+<groundingDataSources>
+    <apiName>recentComments</apiName>
+    <capabilityReferenceName>CaseRecentCommentsCapability</capabilityReferenceName>
+    <description>Recent Case comments block</description>
+    <inputs>
+        <referenceName>caseId</referenceName>
+        <valueExpression>{!$Input:caseRecord.Id}</valueExpression>
+    </inputs>
+    <type>Apex</type>
+</groundingDataSources>
 ```
 
-### Hallucination Testing
+Reference the capability output in `<content>`:
 
-Test each template with:
-1. A fully populated record — verify output uses only provided data.
-2. A sparse record (empty optional fields) — verify graceful handling.
-3. A record with unusual or edge-case values — verify the LLM does not confabulate.
-4. A record where a merge field returns null — verify the template handles null gracefully.
+```
+Recent comments:
+{!$Capability:recentComments.recentCommentsBlock}
+```
 
-### PII / Data Privacy
+### 6.2 Flow Capability
 
-- Audit every merge field in the template. If any field contains PII (name, email, SSN, DOB), confirm:
-  - The use case requires it.
-  - Data handling is compliant with your organization's privacy policy.
-  - The output does not expose or repeat PII unnecessarily.
-- When in doubt, exclude PII fields from the grounding data and use anonymized identifiers.
+An autolaunched Flow with input + output variables can serve as a capability. Same `<groundingDataSources>` shape, with `<type>Flow</type>` and `<capabilityReferenceName>` pointing to the Flow API name.
+
+### 6.3 Apex parameter name match
+
+Capability `<inputs>.<referenceName>` MUST match the `@InvocableVariable` field name case-sensitively. Same rule as Agent Script action inputs (`agentforce-agent-script-reference.md` §9).
 
 ---
 
-## 10. Deterministic Output Formatting
+## 7. Output Contract — `promptResponse`
 
-### Why It Matters
-
-LLMs produce variable free-form text by default. If downstream code (a Flow, an Apex class, a UI component) needs to parse the output, free-form text is unreliable. Specify the exact output format in the template.
-
-### Rules
-
-- Always specify the output format in the template instructions.
-- Prefer JSON for structured outputs — it is machine-parseable.
-- Specify every field name, type, and acceptable values in the prompt.
-- If the downstream system reads specific keys from the output, test that the LLM consistently returns those exact keys.
-
-### Example: Structured JSON Output Instruction
+A prompt template always returns a single string — the model's response. When an Agentforce agent invokes the template as an action, the output is exposed as a single output named **`promptResponse`** of type string. This is the canonical Agent Script convention (see `agentforce-agent-script-reference.md` §9).
 
 ```
-Return your response as a valid JSON object with EXACTLY these keys and value types:
+# In the .agent file:
+actions:
+   Summarize_Case:
+      target: "prompt://Case_Summary_Generator"
+      inputs:
+         "Input:caseRecord": object
+            description: "Case record to summarize"
+            complex_data_type_name: "lightning__recordInfoType"
+            is_required: True
+      outputs:
+         promptResponse: string
+            description: "JSON summary block"
+
+reasoning:
+   actions:
+      summarize: @actions.Summarize_Case
+         with "Input:caseRecord" = @variables.case_record
+         set @variables.summary_json = @outputs.promptResponse
+```
+
+**Three locked-in conventions:**
+1. The input parameter names in the agent action MUST be quoted with the `Input:` prefix: `"Input:caseRecord"`, NOT `caseRecord`.
+2. The output is ALWAYS `promptResponse` (singular, lowercase first letter, camelCase). Never rename.
+3. Long-form target `generatePromptResponse://Template_API_Name` is equivalent to `prompt://Template_API_Name` — both compile; standardize on short form.
+
+Downstream parsing of `promptResponse` into JSON happens in the agent's subagent reasoning, in the consuming Apex, or in the LWC — not inside the template.
+
+---
+
+## 8. Deterministic Output Formatting Inside `<content>`
+
+Constrain the model's output shape inside the prompt body, because `promptResponse` is just a string and consumers (LWC, Apex, agent subagents) want structured data.
+
+```
+Return EXACTLY this JSON object, no markdown fence, no prose:
 {
-  "summary": "<string: 2-3 sentence summary of the case>",
-  "nextSteps": ["<string>", "<string>", "<string>"],
-  "sentiment": "<string: must be exactly one of: Positive, Neutral, Negative>",
-  "urgencyScore": <integer: 1 to 5, where 5 is most urgent>
+  "summary": "<string: 2 sentences>",
+  "nextSteps": ["<string>"],
+  "sentiment": "<Positive|Neutral|Negative>",
+  "confidence": <decimal 0.0 to 1.0>
 }
-
-Do not include any text before or after the JSON object. Do not include markdown code fences.
 ```
 
-### Parsing in Apex / Flow
+Rules:
+- Spell out every key, value type, and acceptable enum literal.
+- "No markdown fence, no prose" instructions reduce the rate of ```json wrapping (still happens sometimes — the consumer should strip-and-deserialize defensively).
+- Test with five-plus representative records before publishing the version. LLM output for the same prompt varies by model and by temperature.
+
+---
+
+## 9. Einstein Trust Layer — Audit, Masking, and Where to Debug
+
+Every prompt template invocation routes through the Einstein Trust Layer. This is non-negotiable and is the single richest source of debugging information.
+
+| Trust Layer feature | Where it surfaces | What you do with it |
+|---|---|---|
+| **Prompt audit log** | Setup → Einstein → Audit Trail (also queryable via `EinsteinPromptAuditTrail` Tooling API). Captures the rendered prompt, masked prompt, model response, user, timestamp, template version. | Primary debugging tool — when a template "returns garbage," pull the audit row and look at the actual rendered prompt the model saw. |
+| **Data masking** | Configured at the org level (Setup → Einstein → Data Masking). PII patterns (email, phone, name, address, SSN, etc.) are replaced with tokens before the prompt leaves Salesforce; tokens are reversed in the response. | Verify your template's masking policy matches the org-level config. If `Account.Name` is masked and your template instructs the model to "address the customer by name," the model sees `[NAME_TOKEN_1]` — design around it. |
+| **Zero-retention contract** | Enforced by the Trust Layer for external models (OpenAI, Anthropic, etc.). Prompts/responses are not used for training. | Compliance documentation only — not something you toggle per template. |
+| **Toxicity / safety scoring** | Each response is scored; high-toxicity responses are flagged in the audit log. | Surface in QA — escalate any flagged response. |
+
+**Debugging recipe** when a template's output looks wrong:
+
+1. Query the audit trail for the failing invocation (template name + timestamp + user).
+2. Compare **rendered prompt** vs **masked prompt** — if masking is hiding the data you care about, that's the cause.
+3. Compare the **active version identifier** with what you think is deployed (`<activeVersionIdentifier>`) — version drift accounts for a meaningful share of "but it worked yesterday" reports.
+4. Check the **model field** — if `<primaryModel>` differs across versions, model-specific behavior may be the cause.
+
+---
+
+## 10. Deployment Order and Dependencies
+
+Prompt templates have hard dependencies on the Apex/Flow capabilities they ground in. Deploy bottom-up:
+
+| Step | Component | Reason |
+|---|---|---|
+| 1 | Apex capability class(es) | Template references the class by name; deploy-time validation checks the class exists. |
+| 2 | Flow capability(ies) | Same as Apex — referenced by API name. |
+| 3 | Permission sets exposing the Apex class | Running user (or `default_agent_user` for service agents) needs class access. |
+| 4 | `GenAiPromptTemplate` metadata | References everything above. |
+| 5 | Agentforce `AiAuthoringBundle` (if the agent calls the template) | Agent action target `prompt://...` validated at publish. |
+| 6 | LWC / Quick Action / Flow that invokes the template (UI surface) | Last — consumes the template. |
+
+**Validate** with the same dry-run pattern used elsewhere:
+
+```bash
+sf project deploy start \
+  --manifest manifest/<your-manifest>.xml \
+  --target-org PlusGradeFullSB \
+  --dry-run --test-level RunLocalTests --wait 60
+```
+
+Zero component errors on the prompt template + its capabilities required.
+
+---
+
+## 11. Versioning Workflow
+
+Always create a new version block before editing live behavior. Editing the active version in place — even in dev — bypasses the audit trail's version provenance and makes regressions invisible.
+
+1. Clone the active `<templateVersions>` block.
+2. Bump `<versionIdentifier>` to a new value (`v2`, `v3`, ...).
+3. Edit `<content>`, `<inputs>`, `<groundingDataSources>`, or `<primaryModel>` in the new block.
+4. Set `<status>Draft</status>` on the new block while iterating.
+5. Test in Prompt Builder Preview against five-plus representative records.
+6. Flip `<status>` to `Published`.
+7. Flip top-level `<activeVersionIdentifier>` to the new identifier.
+8. Deploy.
+9. Verify in audit trail that new invocations show the new version identifier.
+10. Roll back by flipping `<activeVersionIdentifier>` back to the prior value — zero re-deploy of `<content>` needed.
+
+Keep at least the **previous published version** in the file. Pruning old versions removes the rollback path.
+
+---
+
+## 12. Usage From Agentforce Agents
+
+The canonical `.agent` invocation is documented in full in `agentforce-agent-script-reference.md` §9 ("Prompt-template actions are different"). Cross-reference summary:
+
+```
+# Action definition inside a subagent:
+actions:
+   draft_reply:
+      target: "prompt://Email_Reply_Draft_Generator"   # template API name
+      description: "Draft a reply email body for the open Case"
+      inputs:
+         "Input:caseRecord": object
+            description: "The Case being replied to"
+            complex_data_type_name: "lightning__recordInfoType"
+            is_required: True
+         "Input:tone": string
+            description: "Tone: formal / friendly / apologetic"
+            is_required: True
+      outputs:
+         promptResponse: string
+            description: "Drafted email body"
+
+# Invocation inside reasoning.actions:
+reasoning:
+   actions:
+      draft: @actions.draft_reply
+         with "Input:caseRecord" = @variables.case_record
+         with "Input:tone" = @variables.reply_tone
+         set @variables.draft_body = @outputs.promptResponse
+```
+
+Three things to verify when wiring a template into an agent:
+- Template `<type>` is `einstein_gpt__flex`.
+- Template `<visibility>` is `Global`.
+- Every `<inputs>.<referenceName>` in the template matches an `"Input:..."` key in the agent action's `inputs:` block exactly.
+
+---
+
+## 13. Usage From Flow and Apex (non-agent surfaces)
+
+**Flow:** Use the standard "Prompt Template" action element. Input keys are the bare `<apiName>` values (no `Input:` prefix in Flow). Output is `Prompt Response`.
+
+**Apex:** Invoke via the `ConnectApi.EinsteinLLM.generateMessages*` / `ConnectApi.EinsteinPromptTemplate.generateMessagesForPromptTemplate` namespace (exact method name varies by API version — verify in target org). Pattern:
 
 ```apex
-// After receiving LLM output in Apex
-String rawOutput = llmOutput; // from the prompt template result
-Map<String, Object> parsed = (Map<String, Object>) JSON.deserializeUntyped(rawOutput);
-String summary = (String) parsed.get('summary');
-Integer urgencyScore = (Integer) parsed.get('urgencyScore');
+ConnectApi.EinsteinPromptTemplateGenerationsInput input =
+    new ConnectApi.EinsteinPromptTemplateGenerationsInput();
+input.inputParams = new Map<String, ConnectApi.WrappedValue>();
+// inputs keyed by bare apiName for ConnectApi, NOT "Input:..." prefix
+ConnectApi.WrappedValue caseVal = new ConnectApi.WrappedValue();
+caseVal.value = caseRecord;
+input.inputParams.put('caseRecord', caseVal);
+
+ConnectApi.EinsteinPromptTemplateGenerationsRepresentation result =
+    ConnectApi.EinsteinLLM.generateMessagesForPromptTemplate(
+        'Case_Summary_Generator', input);
+String response = result.generations[0].response;
 ```
 
-If the LLM occasionally adds text around the JSON, use a regex or string parsing approach to extract the JSON block before deserializing.
+Verify the exact namespace and method in your org's API version — the ConnectApi surface for prompt templates has shifted across releases.
 
 ---
 
-## 11. Testing / Evaluation
+## 14. Safety Block Inside Every Template
 
-### Test Process
+LLM safety is template-author responsibility. Always include:
 
-1. **Open the template in Prompt Builder UI** — use the Preview panel with a real record.
-2. **Verify all merge fields resolve**: Check that no field shows as null or unresolved. If a merge field fails to resolve, it will be blank or error in the output.
-3. **Check output format**: Confirm the LLM returns the expected structure (JSON keys, value types).
-4. **Review for hallucination**: Read the output critically — does it contain any information NOT present in the grounding data?
-5. **Test edge cases**:
-   - Empty Description field
-   - Very long Description field (token limit)
-   - Unusual characters or formatting in field values
-   - Non-English content (if multilingual support is required)
-6. **Test with multiple representative records**: One test is not enough — run against at least 5–10 diverse records.
-7. **Validate receiving code**: Run the Flow or Apex that consumes the prompt output with the test outputs to confirm parsing succeeds.
+```
+SAFETY:
+- Do not include personal identifying information (names, email, phone, address, SSN) in the output.
+- Only use information from the inputs and capability outputs provided above. Do not invent details.
+- Do not generate harmful, offensive, or misleading content.
+- If inputs are insufficient, return exactly: {"error": "Insufficient information"}.
+- Do not reference systems, companies, or people not present in the provided data.
+```
 
-### Evaluation Metrics
-
-| Metric | Pass Criteria |
-|---|---|
-| Merge field resolution rate | 100% — all fields must resolve |
-| Output format compliance | LLM returns expected JSON structure in all test cases |
-| Hallucination rate | 0% — no invented details in output |
-| Safety instruction compliance | No PII, no harmful content in output |
-| Edge case handling | Graceful output for empty/null fields |
+The Trust Layer's masking and toxicity scoring are a backstop, not a substitute for explicit safety instructions in the prompt body.
 
 ---
 
-## 12. Common AI Mistakes to Avoid
+## 15. Validation Checklist
 
-| Mistake | Why It's Wrong | Correct Approach |
+Before deploying a prompt template version:
+
+- [ ] `<type>` is correct for the surface (`flex` for agent-callable, `field_generation`/`record_summary`/`sales_email` for fixed surfaces).
+- [ ] `<visibility>` is `Global` if any non-Prompt-Builder consumer (Flow, Apex, agent) invokes it.
+- [ ] `<activeVersionIdentifier>` matches a `<versionIdentifier>` with `<status>Published</status>`.
+- [ ] Every `<inputs>.<referenceName>` starts with `Input:`.
+- [ ] Every `{!$Input:...}` in `<content>` resolves to a declared input.
+- [ ] Every `{!$Capability:...}` resolves to a declared `<groundingDataSources>` entry.
+- [ ] Apex capability classes deployed before the template.
+- [ ] Permission set granting class access deployed (and assigned to running user / `default_agent_user`).
+- [ ] Output format spelled out in `<content>` — JSON keys, value types, enum literals.
+- [ ] Safety block present in `<content>`.
+- [ ] Tested against 5+ representative records in Prompt Builder Preview.
+- [ ] Edge cases tested: null inputs, empty rich text, very long descriptions.
+- [ ] Audit trail row for a test invocation reviewed — rendered prompt, masked prompt, model response inspected.
+- [ ] If consumed by an agent: matching action definition in the `.agent` bundle uses `Input:`-prefixed input names and `promptResponse` output.
+
+---
+
+## 16. Common AI Mistakes to Avoid
+
+| # | Mistake (brief) | Correct approach |
 |---|---|---|
-| Missing safety instructions | LLM may hallucinate or include PII in output | Add mandatory safety block to every template |
-| No output format specification | Downstream code cannot reliably parse free-form text | Always specify JSON structure with exact keys |
-| Grounding too much data | Exceeds token limits; LLM performance degrades | Include only relevant fields; pre-summarize large data with Apex |
-| Using Prompt Builder for multi-step orchestration | Prompt Builder is single-step only | Use Agentforce for multi-step or agentic workflows |
-| Not testing with edge-case records | Template fails silently with null/empty data | Test with empty fields and edge cases |
-| Including PII fields without compliance review | Data privacy violation | Audit all merge fields; exclude PII unless explicitly required and approved |
-| No logging implementation | Cannot audit or debug AI outputs | Implement custom logging (metadata only, not PII) |
-| Assuming merge field syntax without verifying | Syntax varies by release; wrong syntax = unresolved fields | Always test merge fields in target org |
+| 1 | Missing safety instructions | LLM may hallucinate or include PII in output. Add mandatory safety block to every template. |
+| 2 | No output format specification | Downstream code cannot reliably parse free-form text — always specify JSON structure with exact keys. |
+| 3 | Grounding too much data | Exceeds token limits; LLM performance degrades. Include only relevant fields; pre-summarize large data with Apex. |
+| 4 | Using Prompt Builder for multi-step orchestration | Prompt Builder is single-step only — use Agentforce for multi-step or agentic workflows. |
+| 5 | Not testing with edge-case records | Template fails silently with null/empty data — test with empty fields and edge cases. |
+| 6 | Including PII fields without compliance review | Data privacy violation — audit all merge fields; exclude PII unless explicitly required and approved. |
+| 7 | No logging implementation | Cannot audit or debug AI outputs — implement custom logging (metadata only, not PII) or rely on Einstein Trust Layer audit trail. |
+| 8 | Assuming merge field syntax without verifying | Syntax varies by release; wrong syntax = unresolved fields. Always test merge fields in target org. |
 
 ---
 
-## 13. Definition of Done
+## 17. Empirical Findings & Implementation Notes
 
-A Prompt Builder template is considered complete when ALL of the following are true:
+When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
 
-- [ ] Template type confirmed and appropriate for use case
-- [ ] All merge fields tested and verified resolving in target org
-- [ ] Grounding sources documented: which fields, related lists, Apex/Flow inputs
-- [ ] Safety instructions included in template body
-- [ ] Output format specified (JSON with explicit keys and types)
-- [ ] Edge case tests performed (empty fields, null values, long text)
-- [ ] No PII exposure — all merge fields reviewed for data privacy compliance
-- [ ] Hallucination test passed — output uses only grounded data
-- [ ] Downstream Flow/Apex that consumes the output tested with sample outputs
-- [ ] Custom logging implemented for audit trail (if required by compliance policy)
-- [ ] Template reviewed by a second developer before production deployment
+*(No empirical findings recorded yet. Add as Salesforce doc gaps are discovered. Format: `| # | YYYY-MM-DD | documented approach | what actually works | why / context |`.)*
 
 ---
 
-## 14. Official References
+## 18. Official References
 
-- Salesforce Help: [Einstein Prompt Builder](https://help.salesforce.com/s/articleView?id=sf.prompt_builder_overview.htm)
+- Salesforce Help: [Einstein Prompt Builder Overview](https://help.salesforce.com/s/articleView?id=sf.prompt_builder_overview.htm)
 - Salesforce Help: [Prompt Template Types](https://help.salesforce.com/s/articleView?id=sf.prompt_builder_template_types.htm)
 - Salesforce Help: [Grounding with Merge Fields](https://help.salesforce.com/s/articleView?id=sf.prompt_builder_merge_fields.htm)
-- Salesforce Help: [Agentforce Overview](https://help.salesforce.com/s/articleView?id=sf.agentforce_overview.htm)
+- Salesforce Metadata API: [GenAiPromptTemplate](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_genaipromptemplate.htm)
+- Salesforce Developer: [Prompt Template Overview](https://developer.salesforce.com/docs/einstein/genai/guide/prompt-template-overview.html)
 - Salesforce Einstein Trust Layer: [Data Security](https://help.salesforce.com/s/articleView?id=sf.einstein_trust_layer.htm)
 - Trailhead: [Get Started with Prompt Builder](https://trailhead.salesforce.com/content/learn/modules/prompt-builder)
-- Salesforce Architect: [AI Design Considerations](https://architect.salesforce.com/decision-guides/ai)
+- Companion in this repo: `agentforce-agent-script-reference.md` §9 — Prompt-template actions from `.agent` files.
+
+---
+
+*Prompt Builder Template Guidelines | v3.0 | Last verified 2026-05-16*

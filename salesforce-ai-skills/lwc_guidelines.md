@@ -1,1029 +1,478 @@
 # Lightning Web Component (LWC) Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Standalone guidelines for LWC development. Attach this file when writing, reviewing, or refactoring any Lightning Web Component.
+Authoritative reference for authoring, reviewing, and refactoring Lightning Web Components in this project. Other skill files reference this one for the LWC layer.
+
+**Verified against:** [LWC Developer Guide](https://developer.salesforce.com/docs/component-library/documentation/en/lwc) · [LWC Platform Guide](https://developer.salesforce.com/docs/platform/lwc/guide/) · [Lightning Web Security](https://developer.salesforce.com/docs/platform/lightning-components-security/guide/intro-lws.html) · [trailheadapps/lwc-recipes](https://github.com/trailheadapps/lwc-recipes) · [forcedotcom/sf-skills `generating-lwc-components`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-lwc-components). Last verified 2026-05-16.
 
 ---
 
-## Table of Contents
+## 1. Required Agent Output Contract
 
-1. [Required Agent Output Contract](#required-agent-output-contract)
-2. [Component Architecture](#component-architecture)
-3. [@api Properties](#api-properties)
-4. [@track and Reactive Properties](#track-and-reactive-properties)
-5. [@wire Usage](#wire-usage)
-6. [@wire vs Imperative Apex Decision Table](#wire-vs-imperative-apex-decision-table)
-7. [LDS / UI API vs Apex Decision Table](#lds--ui-api-vs-apex-decision-table)
-8. [Apex Controller Requirements](#apex-controller-requirements)
-9. [Error Handling](#error-handling)
-10. [Loading / Empty / Success / Error States](#loading--empty--success--error-states)
-11. [refreshApex](#refreshapex)
-12. [Custom Events and Communication](#custom-events-and-communication)
-13. [Lightning Navigation](#lightning-navigation)
-14. [Lightning Message Service (LMS)](#lightning-message-service-lms)
-15. [Component Lifecycle Hooks](#component-lifecycle-hooks)
-16. [Security](#security)
-17. [Performance](#performance)
-18. [Accessibility](#accessibility)
-19. [CSS and Styling](#css-and-styling)
-20. [Jest Testing](#jest-testing)
-21. [Metadata XML Targets](#metadata-xml-targets)
-22. [File Structure and Naming](#file-structure-and-naming)
-23. [Common AI Mistakes to Avoid](#common-ai-mistakes-to-avoid)
-24. [Definition of Done (LWC-specific)](#definition-of-done-lwc-specific)
-25. [Validation Commands](#validation-commands)
-26. [Official References](#official-references)
+Every LWC implementation response MUST include:
+1. **Architecture plan** — smart/dumb split, parent/child relationships, where state lives, what events flow up.
+2. **Files to create** — every bundle file (`.html`, `.js`, `.js-meta.xml`, `.css`, `__tests__/`).
+3. **Apex controllers** — class name, method signatures, `cacheable=true` decision with reason, CRUD/FLS approach.
+4. **Security notes** — `with sharing` justification, FLS strategy, fields exposed, custom-permission gates.
+5. **Jest test strategy** — states asserted (loading/error/empty/success), events covered, mock approach.
+6. **Validation commands** — deploy + test commands for the bundle.
 
 ---
 
-## Required Agent Output Contract
+## 2. Component Architecture — Smart/Dumb Split
 
-Every LWC implementation response MUST include ALL of the following. If any section is missing, the response is incomplete and must not be used as a basis for implementation.
+| Layer | Responsibility | Suffix |
+|---|---|---|
+| **Smart / Container** | Fetches data (`@wire` or imperative), owns `isLoading`/`error`/`data`/`isEmpty`, handles mutations, listens to child events. Never renders individual items. | `<feature>Container` |
+| **Dumb / Presentational** | Receives data via `@api`, renders, dispatches `CustomEvent` upward. No Apex calls, no `@wire`, no business logic. Reusable. | `caseCard`, `contactRow` |
 
-### 1. Component Architecture Plan
-State explicitly:
-- Which components will be created (smart/container vs presentational/dumb)
-- Parent-child relationships and data flow direction
-- Where state lives (which component owns loading/error/data state)
-- What events flow upward (child to parent)
+Why: dumb components are unit-testable in isolation; data-fetching changes only touch the container; loading/error state lives in one place.
 
-### 2. Files to Create
-List every file for every component:
+### Data-flow direction (one-way)
+
 ```
-c/caseDashboardContainer
-  ├── caseDashboardContainer.html
-  ├── caseDashboardContainer.js
-  ├── caseDashboardContainer.js-meta.xml
-  └── caseDashboardContainer.css (if custom styling needed)
-
-c/caseCard
-  ├── caseCard.html
-  ├── caseCard.js
-  ├── caseCard.js-meta.xml
+Parent  -> Child    via @api properties / @api methods
+Child   -> Parent   via CustomEvent (this.dispatchEvent)
+Sibling -> Sibling  via LMS, or via a common parent
 ```
 
-### 3. Apex Controller Classes Needed
-For each Apex class:
-- Class name
-- Methods with signatures
-- Whether cacheable or not (and why)
-- CRUD/FLS enforcement approach
-
-### 4. Security Notes
-- Apex `with sharing` vs `without sharing` — with justification
-- CRUD/FLS enforcement in Apex
-- Which data fields are exposed to the UI and whether they need FLS protection
-- Any `@AuraEnabled` methods accessible to all users (no profile guard)
-
-### 5. Jest Test Strategy
-- Which states to test (loading, error, empty, success)
-- Which events to test
-- Mock strategy for Apex and wire adapters
-- Test file names
-
-### 6. Validation Commands
-Deployment and test commands for this specific component.
+A dumb component never imports Apex when its container already owns that data. Sibling-to-sibling without a common parent uses LMS only.
 
 ---
 
-## Component Architecture
+## 3. Reactive Properties — `@api`, `@track`
 
-### The Smart/Dumb Split
-**Every feature should be decomposed into at least two layers:**
+LWC is reactive by default for primitive reassignment. `@track` is rarely needed in modern API levels.
 
-**Smart Component (Container)**
-- Handles data fetching (wire or imperative Apex calls)
-- Manages state: `isLoading`, `error`, `data`, `isEmpty`
-- Handles mutations (save, delete, update)
-- Dispatches or handles events at the boundary with external systems
-- Does NOT contain rendering of individual data items (delegates to dumb components)
-- Named with `Container` suffix: `casesDashboardContainer`
+### `@api` — public, set by parent or App Builder
+- Set by parent in HTML or by App Builder via `targetConfigs`.
+- **MUST NOT be mutated inside the component** — violates one-way binding; throws in strict mode.
+- For derived values, expose a getter.
 
-**Dumb Component (Presentational)**
-- Receives data via `@api` properties
-- Renders the data
-- Dispatches `CustomEvent` upward when user interacts
-- Has NO Apex calls, NO wire adapters, NO business logic
-- Is reusable — does not know which page or feature it is on
-- Named by what it renders: `caseCard`, `contactRow`, `accountTile`
-
-### Why This Split Matters
-- Dumb components are unit-testable in complete isolation
-- Changing data-fetching strategy only affects the container
-- Dumb components are reusable across features
-- Loading/error state is centralized — not scattered across child components
-
-### Full Architecture Example: Case Dashboard
-
-```
-caseDashboardContainer (smart/container)
-  Responsibilities:
-    - @wire getCases → handles data/error/loading state
-    - renders caseCard for each case in data
-    - handles 'caseselected' event from caseCard
-    - calls imperitive Apex for mutations (close case)
-    - owns: isLoading, error, cases (array)
-
-caseCard (dumb/presentational)
-  Responsibilities:
-    - @api caseRecord (input)
-    - renders: Subject, Status, Priority, Account Name
-    - dispatches: 'caseselected' CustomEvent with { detail: { caseId } }
-    - dispatches: 'closecase' CustomEvent with { detail: { caseId } }
-
-caseCloseModal (dumb/presentational)
-  Responsibilities:
-    - @api isOpen (Boolean)
-    - @api caseId (Id)
-    - renders: confirmation modal content
-    - dispatches: 'confirm' CustomEvent
-    - dispatches: 'cancel' CustomEvent
-```
-
-### Data Flow Direction
-```
-Parent → Child: via @api properties (one-way down)
-Child → Parent: via CustomEvent (one-way up)
-Sibling to Sibling: via LMS or common parent (never directly)
-```
-
-Never bypass this hierarchy. Child components should never import and call Apex directly if the parent container owns that data.
-
----
-
-## @api Properties
-
-### Purpose
-`@api` exposes a property or method on a component so it can be set by a parent component or by the Lightning App Builder (in the case of design attributes).
-
-### Rules
-- `@api` properties must be **primitive types** (String, Number, Boolean, Array, Object) for LWC-to-LWC communication
-- Never mutate an `@api` property inside the component — it violates one-way data binding and will throw a runtime error in strict mode
-- If you need to modify incoming data, copy it to an internal variable in `connectedCallback` or a getter
-- Validate `@api` inputs — never assume the parent set a required value
-
-### Correct Pattern
 ```js
 import { LightningElement, api } from 'lwc';
-
 export default class CaseCard extends LightningElement {
-    @api caseRecord; // received from parent — do NOT mutate
-
-    // If you need a derived/modified version:
-    get displayStatus() {
+    @api caseRecord;                                  // do NOT mutate
+    get displayStatus() {                             // derived via getter
         return this.caseRecord ? this.caseRecord.Status.toUpperCase() : '';
     }
+    handleClick() {                                   // dispatch upward; let parent mutate
+        this.dispatchEvent(new CustomEvent('closecase', {
+            detail: { caseId: this.caseRecord.Id }
+        }));
+    }
 }
 ```
 
-### Anti-Pattern
+Standard context `@api`: `@api recordId`, `@api objectApiName` (auto-set on record pages). For Flow Screens use `role="inputOnly"` / `role="outputOnly"` in `targetConfigs`.
+
+### `@track` — only for deep mutation of nested objects/arrays
+
 ```js
-// WRONG: mutating @api property
-handleClick() {
-    this.caseRecord.Status = 'Closed'; // throws error in strict mode
-}
+@track filterState = { status: 'New' };
+handleChange(e) { this.filterState.status = e.detail.value; }   // @track needed for inner mutation
 
-// CORRECT: dispatch event upward; let parent handle mutation
-handleClick() {
-    this.dispatchEvent(new CustomEvent('closecase', {
-        detail: { caseId: this.caseRecord.Id }
-    }));
-}
+// Idiomatic alternative — reassign, no @track:
+this.filterState = { ...this.filterState, status: e.detail.value };
 ```
 
-### @api in Lightning App Builder
-For properties configurable in App Builder, also add to `.js-meta.xml`:
-```xml
-<property name="recordId" type="String" label="Record Id" description="Id of the record to display"/>
-```
-
-### Design Attributes for Standard Context Variables
-```js
-@api recordId;   // automatically set when on Record Page
-@api objectApiName; // automatically set when on Record Page
-```
+Primitives are always reactive — never wrap them in `@track`.
 
 ---
 
-## @track and Reactive Properties
+## 4. `@wire` Service
 
-### When @track Is Needed
-- In LWC, all properties are reactive by default for primitive reassignment
-- `@track` is only needed when you have a nested object or array and you want LWC to detect mutations to properties **inside** that object/array (deep reactivity)
-- In modern LWC (API version 39+), `@track` is rarely needed
+Declaratively binds a wire adapter to a property or function. Reactive: when inputs change, the wire re-fetches. Results cached per user/method/parameter signature.
 
-### When to Use @track
 ```js
-// Only needed if you mutate properties inside the object:
-@track filterState = { status: 'New', priority: 'High' };
-
-handleStatusChange(event) {
-    this.filterState.status = event.detail.value; // @track detects this inner mutation
-}
-```
-
-### When @track Is NOT Needed
-```js
-// Reassigning the whole object — @track not needed
-this.filterState = { ...this.filterState, status: event.detail.value };
-// OR for primitives:
-this.isLoading = true; // always reactive without @track
-```
-
----
-
-## @wire Usage
-
-### Purpose
-`@wire` declaratively binds a wire service (Apex method or UI API adapter) to a component property or function. It is reactive: when inputs change, the wire re-fetches automatically.
-
-### Wire to Apex Method
-```js
-import { LightningElement, wire } from 'lwc';
+import { LightningElement, wire, api } from 'lwc';
 import getCases from '@salesforce/apex/CaseDashboardController.getCases';
-
-export default class CaseDashboardContainer extends LightningElement {
-    @wire(getCases)
-    wiredCases;
-
-    get cases() {
-        return this.wiredCases.data;
-    }
-
-    get error() {
-        return this.wiredCases.error;
-    }
-}
-```
-
-### Wire with Parameters (Reactive)
-```js
-import { LightningElement, api, wire } from 'lwc';
 import getCasesByAccount from '@salesforce/apex/CaseDashboardController.getCasesByAccount';
 
 export default class CaseDashboardContainer extends LightningElement {
-    @api recordId; // when this changes, wire re-fetches
+    @api recordId;
 
-    @wire(getCasesByAccount, { accountId: '$recordId' }) // $ prefix = reactive
-    wiredCases;
-}
-```
+    // Property form
+    @wire(getCases) wiredCases;
+    get cases() { return this.wiredCases.data; }
+    get error() { return this.wiredCases.error; }
 
-### Wire to Function (for Complex Handling)
-```js
-@wire(getCases)
-wiredCasesHandler({ data, error }) {
-    if (data) {
-        this.cases = data;
-        this.isEmpty = data.length === 0;
-        this.error = undefined;
-    } else if (error) {
-        this.error = this.reduceErrors(error);
-        this.cases = undefined;
+    // Reactive parameter — '$' marks reactive
+    @wire(getCasesByAccount, { accountId: '$recordId' }) wiredByAccount;
+
+    // Function form — custom handling
+    @wire(getCases)
+    wiredCasesHandler({ data, error }) {
+        this.isLoading = false;
+        if (data)       { this.cases = data; this.error = undefined; }
+        else if (error) { this.error = reduceErrors(error); this.cases = undefined; }
     }
-    this.isLoading = false;
 }
 ```
 
-### Wire with UI API Adapters
+UI API adapters (no Apex):
 ```js
 import { getRecord } from 'lightning/uiRecordApi';
-import CASE_STATUS from '@salesforce/schema/Case.Status';
-import CASE_SUBJECT from '@salesforce/schema/Case.Subject';
-
-@wire(getRecord, { recordId: '$recordId', fields: [CASE_STATUS, CASE_SUBJECT] })
-wiredCase;
+import CASE_STATUS  from '@salesforce/schema/Case.Status';
+@wire(getRecord, { recordId: '$recordId', fields: [CASE_STATUS] }) wiredCase;
 ```
 
-### When NOT to Use @wire
-- When you need to call Apex conditionally (based on user action)
-- When you need explicit control over loading state
-- When the Apex method performs DML or side effects
-- When you need to sequence multiple Apex calls
+**Do NOT use `@wire` when:** the call is user-action driven; the method does DML; you need explicit spinner control; you need sequencing or retry.
 
 ---
 
-## @wire vs Imperative Apex Decision Table
+## 5. Imperative Apex
 
-| Scenario | Recommendation | Reason |
-|---|---|---|
-| Read record data on page load, reactive to record changes | @wire | Automatic reactivity, caching |
-| Read list of related records, reactive to input | @wire Apex method | Cache + reactivity |
-| Load data when user clicks a button | Imperative | User-triggered, not reactive |
-| Submit a form / save data | Imperative | DML method; cannot be cached |
-| Load data once with complex conditional logic | Imperative | More control over when/whether to call |
-| Need explicit loading spinner control | Imperative | Wire has no loading state property |
-| Sequential calls (call B only after A succeeds) | Imperative | Wire calls are independent |
-| Need to handle errors with custom retry logic | Imperative | More control |
-| Display data in read-only detail view | @wire | Simplest and most cache-efficient |
-| Form save, delete, bulk action | Imperative | Side-effecting operations |
+Use when you need explicit control: button-triggered loads, DML, sequencing, custom error handling.
 
-### Imperative Apex Pattern
 ```js
-import { LightningElement } from 'lwc';
 import saveCase from '@salesforce/apex/CaseDashboardController.saveCase';
 
-export default class CaseSaveForm extends LightningElement {
-    isLoading = false;
-    error;
-
-    async handleSave() {
-        this.isLoading = true;
-        this.error = undefined;
-        try {
-            const result = await saveCase({
-                caseId: this.recordId,
-                newStatus: this.selectedStatus
-            });
-            this.dispatchEvent(new CustomEvent('saved', { detail: { result } }));
-        } catch (e) {
-            this.error = this.reduceErrors(e);
-        } finally {
-            this.isLoading = false;
-        }
-    }
-
-    reduceErrors(e) {
-        if (typeof e === 'string') return e;
-        if (e.body && e.body.message) return e.body.message;
-        if (e.message) return e.message;
-        return 'Unknown error';
-    }
-}
-```
-
----
-
-## LDS / UI API vs Apex Decision Table
-
-| Scenario | Recommendation | Why |
-|---|---|---|
-| Read standard fields on a single record | UI API (`getRecord`) | Built-in FLS, caching, reactivity |
-| Read picklist values for standard fields | UI API (`getPicklistValues`) | No custom Apex needed |
-| Read object metadata (label, fields list) | UI API (`getObjectInfo`) | Built-in, reactive |
-| Create a standard record (basic) | LDS (`createRecord`) | No Apex needed; handles FLS |
-| Edit/update a standard record | LDS (`updateRecord`) | No Apex needed; handles FLS |
-| Delete a record | LDS (`deleteRecord`) | No Apex needed; handles FLS |
-| Read records with custom SOQL / multi-object | Custom Apex | UI API can't do complex SOQL |
-| Custom business logic on save | Custom Apex | LDS bypasses custom logic |
-| Access custom objects with FLS enforcement | Custom Apex with `WITH USER_MODE` | Explicit FLS enforcement |
-| Aggregated query (GROUP BY, SUM, COUNT) | Custom Apex | UI API doesn't support aggregation |
-| Read related list with complex filter | Custom Apex | More control than UI API |
-
-### LDS createRecord Example
-```js
-import { createRecord } from 'lightning/uiRecordApi';
-import CASE_OBJECT from '@salesforce/schema/Case';
-import CASE_SUBJECT from '@salesforce/schema/Case.Subject';
-import CASE_STATUS from '@salesforce/schema/Case.Status';
-
-async handleCreate() {
-    const fields = {};
-    fields[CASE_SUBJECT.fieldApiName] = this.subject;
-    fields[CASE_STATUS.fieldApiName] = 'New';
-    const recordInput = { apiName: CASE_OBJECT.objectApiName, fields };
-    try {
-        const result = await createRecord(recordInput);
-        this.dispatchEvent(new CustomEvent('created', { detail: { id: result.id } }));
-    } catch (e) {
-        this.error = this.reduceErrors(e);
-    }
-}
-```
-
----
-
-## Apex Controller Requirements
-
-### Mandatory Rules
-1. MUST use `with sharing` — always, unless you have explicit documented justification
-2. MUST enforce CRUD/FLS explicitly — never assume LWC or the platform does it
-3. MUST use `@AuraEnabled(cacheable=true)` ONLY for read-only methods (no DML)
-4. MUST use `@AuraEnabled` (no cacheable) for methods that perform DML or have side effects
-5. MUST throw `AuraHandledException` with a user-safe message for client-facing errors
-6. MUST NOT expose internal exception messages directly to the client
-
-### Class Header Template
-```apex
-/**
- * @description Apex controller for Case Dashboard LWC.
- *              Provides methods for reading and updating Case records.
- * @developer Naresh
- * @title Senior Salesforce Developer
- * @version 1.0 (April 2026)
- */
-public with sharing class CaseDashboardController {
-    // ... methods below
-}
-```
-
-### Read Method (cacheable=true)
-```apex
-/**
- * @description Returns a list of Cases accessible to the current user.
- * @return List<Case>
- */
-@AuraEnabled(cacheable=true)
-public static List<Case> getCases() {
-    if (!Schema.sObjectType.Case.isAccessible()) {
-        throw new AuraHandledException('Insufficient access to Cases');
-    }
-    return [
-        SELECT Id, Subject, Status, Priority, AccountId, Account.Name, CreatedDate
-        FROM Case
-        WITH USER_MODE
-        ORDER BY CreatedDate DESC
-        LIMIT 50
-    ];
-}
-```
-
-### Read Method with Parameter
-```apex
-@AuraEnabled(cacheable=true)
-public static List<Case> getCasesByAccount(Id accountId) {
-    if (accountId == null) {
-        throw new AuraHandledException('accountId is required');
-    }
-    if (!Schema.sObjectType.Case.isAccessible()) {
-        throw new AuraHandledException('Insufficient access to Cases');
-    }
-    return [
-        SELECT Id, Subject, Status, Priority, CreatedDate
-        FROM Case
-        WHERE AccountId = :accountId
-        WITH USER_MODE
-        ORDER BY CreatedDate DESC
-        LIMIT 100
-    ];
-}
-```
-
-### Mutation Method (no cacheable)
-```apex
-/**
- * @description Closes a Case by setting Status to Closed.
- * @param caseId Id of the Case to close
- */
-@AuraEnabled
-public static void closeCase(Id caseId) {
-    if (caseId == null) {
-        throw new AuraHandledException('caseId is required');
-    }
-    if (!Schema.sObjectType.Case.isUpdateable()) {
-        throw new AuraHandledException('Insufficient access to update Cases');
-    }
-    try {
-        Case c = new Case(Id = caseId, Status = 'Closed');
-        update as user c;
-    } catch (DmlException e) {
-        throw new AuraHandledException('Error closing case: ' + e.getDmlMessage(0));
-    } catch (Exception e) {
-        throw new AuraHandledException('Unexpected error: please contact support');
-    }
-}
-```
-
-### WITH USER_MODE vs WITH SHARING
-| Approach | CRUD/FLS Enforced? | When to Use |
-|---|---|---|
-| `WITH USER_MODE` in SOQL | Yes, per field | Recommended for all queries |
-| `update as user` DML | Yes | Recommended for all DML |
-| `with sharing` class keyword | Record sharing only, NOT FLS | Always use, but not sufficient alone |
-| `WITHOUT USER_MODE` | No | System admin jobs only; document justification |
-
----
-
-## Error Handling
-
-### Principles
-1. ALWAYS handle both `data` and `error` states from every wire or imperative call
-2. Never expose raw Apex exception messages to users in production UI
-3. Show user-friendly messages; log technical details separately
-4. Provide actionable guidance when possible ("Please try again" or "Contact support")
-
-### The reduceErrors Helper
-Define this utility function in every container component (or extract to a shared utility module):
-```js
-reduceErrors(errors) {
-    if (!Array.isArray(errors)) {
-        errors = [errors];
-    }
-    return errors
-        .filter(error => !!error)
-        .map(error => {
-            // UI API errors
-            if (Array.isArray(error.body)) {
-                return error.body.map(e => e.message);
-            }
-            // AuraHandledException
-            if (error.body && typeof error.body.message === 'string') {
-                return error.body.message;
-            }
-            // JS errors
-            if (typeof error.message === 'string') {
-                return error.message;
-            }
-            return error.toString();
-        })
-        .reduce((prev, curr) => prev.concat(curr), [])
-        .join(', ');
-}
-```
-
-Or import from a shared utility LWC:
-```js
-import { reduceErrors } from 'c/errorUtils';
-```
-
-### Wire Error Handling
-```js
-@wire(getCases)
-wiredCasesHandler({ data, error }) {
-    this.isLoading = false;
-    if (data) {
-        this.cases = data;
-        this.isEmpty = data.length === 0;
-        this.error = undefined;
-    } else if (error) {
-        this.error = this.reduceErrors(error);
-        this.cases = undefined;
-        console.error('getCases wire error:', JSON.stringify(error));
-    }
-}
-```
-
-### Imperative Error Handling
-```js
 async handleSave() {
-    this.isLoading = true;
-    this.error = undefined;
+    this.isLoading = true; this.error = undefined;
     try {
-        await saveRecord({
-            caseId: this.recordId,
-            newStatus: this.selectedStatus
-        });
-        this.dispatchEvent(new CustomEvent('saved'));
-        this.showToast('Success', 'Case saved successfully', 'success');
+        const result = await saveCase({ caseId: this.recordId, newStatus: this.selectedStatus });
+        this.dispatchEvent(new CustomEvent('saved', { detail: { result } }));
     } catch (e) {
-        this.error = this.reduceErrors(e);
-        console.error('saveRecord error:', JSON.stringify(e));
+        this.error = reduceErrors(e);
     } finally {
         this.isLoading = false;
     }
 }
 ```
 
-### Toast Notifications
-```js
-import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+### `@wire` vs imperative — decision table
 
-showToast(title, message, variant) {
-    this.dispatchEvent(new ShowToastEvent({
-        title,
-        message,
-        variant // 'success', 'error', 'warning', 'info'
-    }));
-}
-```
+| Scenario | Use | Reason |
+|---|---|---|
+| Load record on render, reactive to record changes | `@wire` | Auto-reactive, cached |
+| Related list reactive to `recordId` | `@wire` Apex | Cache + reactivity |
+| Load on button click | imperative | User-triggered |
+| Submit / save / delete | imperative | DML; cannot be cacheable |
+| Sequence A then B then C | imperative | Wires fire independently |
+| Explicit spinner toggle | imperative | Wire has no loading state |
+| Custom retry on failure | imperative | Wire has no retry hook |
+| Read-only detail panel | `@wire` | Simplest |
 
 ---
 
-## Loading / Empty / Success / Error States
+## 6. Lightning Data Service vs Custom Apex
 
-### The State Machine
-Every container component must handle exactly four states:
+LDS uses the UI API to read/write records with FLS, caching, and reactivity — no Apex needed.
 
-| State | When | What to Show |
+| Scenario | Use | Why |
 |---|---|---|
-| `isLoading` | Apex call in progress | `lightning-spinner` |
-| `hasError` | Error returned from Apex | Error message component |
-| `hasData` | Data returned and non-empty | The actual data content |
-| `isEmpty` | Data returned but empty array | "No records found" message |
+| Read single record (standard fields) | `getRecord` | FLS, caching, reactivity built in |
+| Picklist values | `getPicklistValues` | No Apex |
+| Object info (label, fields) | `getObjectInfo` | Reactive |
+| Create / update / delete | `createRecord` / `updateRecord` / `deleteRecord` | FLS enforced |
+| Inline edit form | `lightning-record-edit-form` + `lightning-input-field` | Zero JS |
+| Multi-object SOQL, aggregation, GROUP BY | Custom Apex | UI API doesn't support |
+| Custom business logic on save | Custom Apex | LDS bypasses logic |
+| Complex related-list filters | Custom Apex | More control |
 
-### JavaScript State Properties
 ```js
-export default class CaseDashboardContainer extends LightningElement {
-    isLoading = true; // start as true — data hasn't loaded yet
-    error;
-    cases;
+import { createRecord } from 'lightning/uiRecordApi';
+import CASE_OBJECT  from '@salesforce/schema/Case';
+import CASE_SUBJECT from '@salesforce/schema/Case.Subject';
+import CASE_STATUS  from '@salesforce/schema/Case.Status';
 
-    get hasError() { return !!this.error; }
-    get hasData() { return this.cases && this.cases.length > 0; }
-    get isEmpty() { return this.cases && this.cases.length === 0; }
+async handleCreate() {
+    const fields = {};
+    fields[CASE_SUBJECT.fieldApiName] = this.subject;
+    fields[CASE_STATUS.fieldApiName]  = 'New';
+    const result = await createRecord({ apiName: CASE_OBJECT.objectApiName, fields });
+    this.dispatchEvent(new CustomEvent('created', { detail: { id: result.id } }));
+}
+```
 
-    @wire(getCases)
-    wiredCasesHandler({ data, error }) {
-        this.isLoading = false;
-        if (data) {
-            this.cases = data;
-            this.error = undefined;
-        } else if (error) {
-            this.error = this.reduceErrors(error);
-            this.cases = undefined;
+**Prefer base record components** (`lightning-record-form`, `lightning-record-edit-form`, `lightning-record-view-form`) when the requirement is "show/edit a record's fields with FLS." Drop to custom Apex only when business logic, multi-object joins, or aggregates are involved.
+
+---
+
+## 7. Apex Controller Requirements
+
+1. `with sharing` — always, unless explicitly justified.
+2. `@AuraEnabled(cacheable=true)` ONLY on read-only methods. DML in a cacheable method throws at runtime.
+3. CRUD/FLS enforced via `WITH USER_MODE` on SOQL and `as user` on DML.
+4. `AuraHandledException` with a user-safe message. Raw exception messages MUST NOT reach the UI.
+5. Custom permissions for method-level access control when role/profile is insufficient.
+
+```apex
+public with sharing class CaseDashboardController {
+
+    @AuraEnabled(cacheable=true)
+    public static List<Case> getCases() {
+        if (!Schema.sObjectType.Case.isAccessible()) {
+            throw new AuraHandledException('Insufficient access to Cases');
+        }
+        return [
+            SELECT Id, Subject, Status, Priority, Account.Name, CreatedDate
+            FROM Case WITH USER_MODE
+            ORDER BY CreatedDate DESC LIMIT 50
+        ];
+    }
+
+    @AuraEnabled
+    public static void closeCase(Id caseId) {
+        if (caseId == null) throw new AuraHandledException('caseId is required');
+        if (!Schema.sObjectType.Case.isUpdateable()) {
+            throw new AuraHandledException('Insufficient access to update Cases');
+        }
+        try {
+            update as user new Case(Id = caseId, Status = 'Closed');
+        } catch (DmlException e) {
+            throw new AuraHandledException('Error closing case: ' + e.getDmlMessage(0));
+        } catch (Exception e) {
+            throw new AuraHandledException('Unexpected error: please contact support');
         }
     }
 }
 ```
 
-### HTML Template — Complete Four-State Pattern
+### Security enforcement matrix
+
+| Mechanism | Enforces | When |
+|---|---|---|
+| `with sharing` keyword | Record sharing only — NOT FLS | Always |
+| `WITH USER_MODE` in SOQL | CRUD + FLS at query | All queries |
+| `as user` on DML | CRUD + FLS at write | All DML |
+| `WITHOUT USER_MODE` | Nothing | Admin jobs only; document justification |
+
+---
+
+## 8. Error Handling — Four-State Template
+
+Always handle both `data` and `error`. Never surface raw stacktraces. Friendly message in UI; `console.error` for technical detail.
+
+```js
+// c/errorUtils/errorUtils.js
+export function reduceErrors(errors) {
+    if (!Array.isArray(errors)) errors = [errors];
+    return errors
+        .filter(e => !!e)
+        .map(e => {
+            if (Array.isArray(e.body))                            return e.body.map(b => b.message);
+            if (e.body && typeof e.body.message === 'string')     return e.body.message;
+            if (typeof e.message === 'string')                    return e.message;
+            return e.toString();
+        })
+        .reduce((p, c) => p.concat(c), [])
+        .join(', ');
+}
+```
+
+Toast:
+```js
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+this.dispatchEvent(new ShowToastEvent({ title, message, variant })); // 'success' | 'error' | 'warning' | 'info'
+```
+
+---
+
+## 9. Loading / Empty / Success / Error — State Machine
+
+Every container handles exactly four states.
+
+| State | Trigger | UI |
+|---|---|---|
+| `isLoading` | wire/imperative in flight | `lightning-spinner` |
+| `hasError`  | error returned | SLDS alert |
+| `hasData`   | data returned, non-empty | Rendered content |
+| `isEmpty`   | data returned, empty array | "No records found" |
+
+```js
+isLoading = true; error; cases;
+get hasError() { return !!this.error; }
+get hasData()  { return this.cases && this.cases.length > 0; }
+get isEmpty()  { return this.cases && this.cases.length === 0; }
+```
+
 ```html
 <template>
     <lightning-card title="Cases" icon-name="standard:case">
         <div class="slds-var-p-around_medium">
-
-            <!-- Loading State -->
             <template lwc:if={isLoading}>
-                <lightning-spinner
-                    alternative-text="Loading cases..."
-                    size="medium">
-                </lightning-spinner>
+                <lightning-spinner alternative-text="Loading cases..." size="medium"></lightning-spinner>
             </template>
-
-            <!-- Error State -->
             <template lwc:elseif={hasError}>
-                <div class="slds-notify slds-notify_alert slds-alert_error" role="alert">
-                    <span class="slds-assistive-text">error</span>
+                <div class="slds-notify slds-notify_alert slds-alert_error" role="alert" data-id="error-message">
                     <p>{error}</p>
                 </div>
             </template>
-
-            <!-- Success / Data State -->
             <template lwc:elseif={hasData}>
-                <template for:each={cases} for:item="caseRecord">
-                    <c-case-card
-                        key={caseRecord.Id}
-                        case-record={caseRecord}
-                        oncaseselected={handleCaseSelected}
-                        onclosecase={handleCloseCase}>
-                    </c-case-card>
+                <template for:each={cases} for:item="c">
+                    <c-case-card key={c.Id} case-record={c}
+                                 oncaseselected={handleCaseSelected}
+                                 onclosecase={handleCloseCase}></c-case-card>
                 </template>
             </template>
-
-            <!-- Empty State -->
             <template lwc:else>
-                <div class="slds-illustration slds-illustration_small">
-                    <p class="slds-text-body_regular">No cases found.</p>
-                </div>
+                <p data-id="empty-message" class="slds-text-body_regular">No cases found.</p>
             </template>
-
         </div>
     </lightning-card>
 </template>
 ```
 
-### lwc:if vs Conditional CSS
-- Use `lwc:if` / `lwc:elseif` / `lwc:else` for conditional rendering (removes element from DOM)
-- Do NOT use `style="display:none"` to hide elements — the element still renders and may cause accessibility and performance issues
-- Exception: CSS-driven show/hide for animations or transitions where DOM presence is needed
+Use `lwc:if` / `lwc:elseif` / `lwc:else` — never `style="display:none"` for conditional rendering. The hidden element still mounts and causes accessibility/performance issues.
 
 ---
 
-## refreshApex
+## 10. `refreshApex` — Re-fetching after mutations
 
-### When to Use
-Use `refreshApex` when a mutation (save, update, delete) has been made and you need the `@wire`-bound data to re-fetch from the server.
+Invalidates a `@wire` cache so the next read fetches fresh. Imperative calls have no wire result — re-call imperatively instead.
 
-### Setup Pattern
-You must store a reference to the wire result to pass to `refreshApex`:
 ```js
-import { LightningElement, wire } from 'lwc';
 import { refreshApex } from '@salesforce/apex';
-import getCases from '@salesforce/apex/CaseDashboardController.getCases';
 
-export default class CaseDashboardContainer extends LightningElement {
-    wiredCasesResult; // store the raw wire result
-    cases;
-
-    @wire(getCases)
-    wiredCasesHandler(result) {
-        this.wiredCasesResult = result; // store for refreshApex
-        const { data, error } = result;
-        if (data) {
-            this.cases = data;
-        } else if (error) {
-            this.error = this.reduceErrors(error);
-        }
-    }
-
-    async handleCaseCloseSuccess() {
-        await refreshApex(this.wiredCasesResult); // re-fetches getCases
-    }
+wiredCasesResult;                                      // store the raw wire result
+@wire(getCases)
+wiredCasesHandler(result) {
+    this.wiredCasesResult = result;
+    const { data, error } = result;
+    if (data) this.cases = data;
+    else if (error) this.error = reduceErrors(error);
 }
-```
 
-### What refreshApex Does NOT Do
-- Does not work with imperative Apex calls (no wire result to refresh)
-- Does not guarantee fresh data from the database if Salesforce's CDN cache hasn't expired
-- Does not automatically re-render; re-render happens when wire result updates
-
-### When to Use Imperative Re-fetch Instead
-If `refreshApex` is consistently stale, switch to imperative Apex in the mutation handler:
-```js
 async handleCloseCase(event) {
-    const { caseId } = event.detail;
-    await closeCase({ caseId });
-    // Then re-fetch imperatively
-    const freshCases = await getCasesImperative();
-    this.cases = freshCases;
+    await closeCase({ caseId: event.detail.caseId });
+    await refreshApex(this.wiredCasesResult);
 }
 ```
+
+If `refreshApex` returns stale data (rare — usually CDN cache), switch to an imperative re-fetch in the mutation handler.
 
 ---
 
-## Custom Events and Communication
+## 11. Custom Events — Child to Parent
 
-### Event Direction Rule
-- Parent to child: `@api` properties or methods
-- Child to parent: `CustomEvent` dispatched with `this.dispatchEvent()`
-- Sibling to sibling (no common parent): Lightning Message Service
-
-### Defining a Custom Event
 ```js
-// In child component (caseCard.js):
-handleViewCase() {
-    this.dispatchEvent(new CustomEvent('caseselected', {
-        detail: {
-            caseId: this.caseRecord.Id,
-            caseSubject: this.caseRecord.Subject
-        },
-        bubbles: false,  // only bubble if intentional
-        composed: false  // only cross shadow DOM if intentional
-    }));
-}
+// child
+this.dispatchEvent(new CustomEvent('caseselected', {
+    detail:   { caseId: this.caseRecord.Id },
+    bubbles:  false,
+    composed: false
+}));
 ```
 
-### Listening in Parent
 ```html
-<!-- caseDashboardContainer.html -->
-<c-case-card
-    key={caseRecord.Id}
-    case-record={caseRecord}
-    oncaseselected={handleCaseSelected}>
-</c-case-card>
-```
-Note: `caseselected` event name maps to `oncaseselected` attribute (lowercase, no camelCase in HTML).
-
-```js
-// In caseDashboardContainer.js:
-handleCaseSelected(event) {
-    const { caseId, caseSubject } = event.detail;
-    this.selectedCaseId = caseId;
-}
+<!-- parent — event name 'caseselected' maps to attribute 'oncaseselected' (no camelCase) -->
+<c-case-card key={c.Id} case-record={c} oncaseselected={handleCaseSelected}></c-case-card>
 ```
 
-### Event Naming Convention
-- Use lowercase, hyphen-separated event names: `caseselected`, `form-submitted`, `record-deleted`
-- Do NOT use camelCase in event names: ~~`caseSelected`~~ → use `caseselected`
-- Be descriptive: `caseselected` not just `selected`
+### Naming rules
+- Lowercase, no camelCase: `caseselected`, `form-submitted`, `record-deleted`.
+- Be specific: `caseselected` not `selected`.
 
-### bubbles and composed
-| Setting | Behavior | When to Use |
+### `bubbles` / `composed` matrix
+
+| Setting | Behavior | When |
 |---|---|---|
-| `bubbles: false` (default) | Only parent can hear | Standard parent-child (most cases) |
-| `bubbles: true` | Propagates up the DOM | When you need grandparent to catch |
-| `composed: true` | Crosses shadow DOM boundary | When event needs to escape LWC shadow |
-| Both `bubbles: true, composed: true` | Propagates everywhere | Rare — use LMS instead |
+| `bubbles: false` (default) | Direct parent only | Standard parent-child |
+| `bubbles: true` | Propagates up DOM tree | Grandparent listens |
+| `composed: true` | Crosses shadow-DOM boundary | Escape shadow root |
+| Both `true` | Everywhere | Rare — prefer LMS |
 
 ---
 
-## Lightning Navigation
+## 12. Lightning Message Service (LMS)
 
-### Import
-```js
-import { LightningElement } from 'lwc';
-import { NavigationMixin } from 'lightning/navigation';
+For components without a parent-child relationship: different page regions, different App Builder sections, across Experience Cloud pages.
 
-export default class CaseDashboardContainer extends NavigationMixin(LightningElement) {
-    navigateToCase(caseId) {
-        this[NavigationMixin.Navigate]({
-            type: 'standard__recordPage',
-            attributes: {
-                recordId: caseId,
-                actionName: 'view'
-            }
-        });
-    }
-
-    navigateToNewCase() {
-        this[NavigationMixin.Navigate]({
-            type: 'standard__objectPage',
-            attributes: {
-                objectApiName: 'Case',
-                actionName: 'new'
-            }
-        });
-    }
-
-    navigateToNamedPage(pageName) {
-        this[NavigationMixin.Navigate]({
-            type: 'standard__namedPage',
-            attributes: {
-                pageName: pageName // e.g., 'home'
-            }
-        });
-    }
-}
-```
-
-### NEVER Hardcode Navigation URLs
-```js
-// WRONG:
-window.location.href = '/lightning/r/Case/001XXXXXXXXXX/view';
-
-// CORRECT:
-this[NavigationMixin.Navigate]({ type: 'standard__recordPage', ... });
-```
-
-### Generate URL (without navigating)
-```js
-async getRecordUrl(recordId) {
-    const url = await this[NavigationMixin.GenerateUrl]({
-        type: 'standard__recordPage',
-        attributes: { recordId, actionName: 'view' }
-    });
-    return url;
-}
-```
-
----
-
-## Lightning Message Service (LMS)
-
-### When to Use LMS
-- Communication between components that do NOT share a parent-child relationship
-- Components in different regions of the page (e.g., header and body)
-- Components in different Lightning App Builder sections
-- Communication across Experience Cloud pages
-
-### When NOT to Use LMS
-- Parent-child communication (use `@api` and `CustomEvent`)
-- Cross-app navigation (use `NavigationMixin`)
-- Simple sibling communication where a common parent can be created
-
-### MessageChannel Metadata File
 ```xml
-<!-- force-app/main/default/messageChannels/CaseSelected.messageChannel-meta.xml -->
+<!-- messageChannels/CaseSelected.messageChannel-meta.xml -->
 <?xml version="1.0" encoding="UTF-8"?>
 <LightningMessageChannel xmlns="http://soap.sforce.com/2006/04/metadata">
     <masterLabel>Case Selected</masterLabel>
     <isExposed>true</isExposed>
-    <description>Message channel for notifying components when a Case is selected.</description>
-    <lightningMessageFields>
-        <fieldName>caseId</fieldName>
-        <description>Salesforce Id of the selected Case</description>
-    </lightningMessageFields>
-    <lightningMessageFields>
-        <fieldName>caseSubject</fieldName>
-        <description>Subject of the selected Case</description>
-    </lightningMessageFields>
+    <lightningMessageFields><fieldName>caseId</fieldName></lightningMessageFields>
+    <lightningMessageFields><fieldName>caseSubject</fieldName></lightningMessageFields>
 </LightningMessageChannel>
 ```
 
-### Publishing (Sender Component)
 ```js
-import { LightningElement, wire } from 'lwc';
-import { MessageContext, publish } from 'lightning/messageService';
-import CASE_SELECTED_CHANNEL from '@salesforce/messageChannel/CaseSelected__c';
+import { MessageContext, publish, subscribe, unsubscribe } from 'lightning/messageService';
+import CHANNEL from '@salesforce/messageChannel/CaseSelected__c';
 
-export default class CaseSender extends LightningElement {
-    @wire(MessageContext)
-    messageContext;
+@wire(MessageContext) messageContext;
+subscription;
 
-    handleCaseClick(event) {
-        const message = {
-            caseId: event.currentTarget.dataset.id,
-            caseSubject: event.currentTarget.dataset.subject
-        };
-        publish(this.messageContext, CASE_SELECTED_CHANNEL, message);
-    }
+connectedCallback() {
+    this.subscription = subscribe(this.messageContext, CHANNEL, (m) => this.handleMessage(m));
+}
+disconnectedCallback() {
+    unsubscribe(this.subscription); this.subscription = null;    // critical — leaked subs = ghost handlers
+}
+publishSelection(caseId, caseSubject) {
+    publish(this.messageContext, CHANNEL, { caseId, caseSubject });
 }
 ```
 
-### Subscribing (Receiver Component)
-```js
-import { LightningElement, wire } from 'lwc';
-import { MessageContext, subscribe, unsubscribe } from 'lightning/messageService';
-import CASE_SELECTED_CHANNEL from '@salesforce/messageChannel/CaseSelected__c';
-
-export default class CaseReceiver extends LightningElement {
-    @wire(MessageContext)
-    messageContext;
-
-    subscription;
-    selectedCaseId;
-
-    connectedCallback() {
-        this.subscription = subscribe(
-            this.messageContext,
-            CASE_SELECTED_CHANNEL,
-            (message) => this.handleMessage(message)
-        );
-    }
-
-    disconnectedCallback() {
-        unsubscribe(this.subscription);
-        this.subscription = null;
-    }
-
-    handleMessage(message) {
-        this.selectedCaseId = message.caseId;
-    }
-}
-```
+Don't use LMS for parent ↔ child (use `@api` + `CustomEvent`), cross-app navigation (use `NavigationMixin`), or sibling pairs where a common parent is trivial.
 
 ---
 
-## Component Lifecycle Hooks
+## 13. Lightning Navigation Service
 
-### Lifecycle Order
-1. `constructor()` — component instance created
-2. `connectedCallback()` — component inserted into DOM
-3. `renderedCallback()` — component render/re-render complete
-4. `disconnectedCallback()` — component removed from DOM
-5. `errorCallback(error, stack)` — child component throws an error
-
-### Rules for Each Hook
-
-**constructor()**
-- Call `super()` first always
-- Do NOT access `this.template` (DOM not yet available)
-- Do NOT access `@api` properties (not set yet)
-- Only initialize internal variables
 ```js
-constructor() {
-    super();
-    this.isLoading = true; // OK
-}
-```
-
-**connectedCallback()**
-- `@api` properties are set by the time this runs
-- Access `this.template` is available
-- Good for: LMS subscriptions, initializing state from `@api`, imperative Apex if needed on load
-```js
-connectedCallback() {
-    this.subscribeToLMS();
-    if (this.recordId) {
-        this.loadData();
+import { NavigationMixin } from 'lightning/navigation';
+export default class CaseActions extends NavigationMixin(LightningElement) {
+    navigateToCase(caseId) {
+        this[NavigationMixin.Navigate]({
+            type: 'standard__recordPage',
+            attributes: { recordId: caseId, actionName: 'view' }
+        });
     }
 }
 ```
 
-**renderedCallback()**
-- Runs after every render — be careful with side effects
-- Use to initialize 3rd-party JS libraries that need DOM access
-- Add a guard to prevent re-initialization:
+### Common `PageReference` types
+
+| `type` | Use |
+|---|---|
+| `standard__recordPage` | View/edit a record by Id |
+| `standard__objectPage` | Object home, list view, new-record action |
+| `standard__namedPage` | Named pages: `home`, `chatter`, `dashboard` |
+| `standard__app` | Lightning app |
+| `standard__component` | Stand-alone LWC route (rare) |
+| `standard__webPage` | External URL |
+| `comm__namedPage` | Experience Cloud named page |
+
+`[NavigationMixin.Navigate](ref)` navigates now; `[NavigationMixin.GenerateUrl](ref)` returns the URL string asynchronously — use for `href` bindings, copy-to-clipboard, share buttons. Never hardcode URLs — they break in Experience Cloud, console apps, and the mobile app.
+
+---
+
+## 14. Component Lifecycle Hooks
+
+| Hook | When | Allowed / Required |
+|---|---|---|
+| `constructor()` | Instance created | `super()` first. No `this.template`, no `@api` reads (not set yet). |
+| `connectedCallback()` | Inserted into DOM | `@api` is set; `this.template` available. Subscribe to LMS; one-shot imperative loads. |
+| `renderedCallback()` | After every render | DOM-dependent JS init. Guard with `isInitialized` to avoid loops. |
+| `disconnectedCallback()` | Removed from DOM | Unsubscribe LMS, clear intervals, remove listeners. |
+| `errorCallback(err, stack)` | Child threw | Capture for fallback UI; log technical detail. |
+
 ```js
 isInitialized = false;
-
 renderedCallback() {
-    if (this.isInitialized) return;
+    if (this.isInitialized) return;          // critical — prevents render loop
     this.isInitialized = true;
-    // one-time DOM initialization
 }
-```
-
-**disconnectedCallback()**
-- Clean up all subscriptions, event listeners, timers
-```js
 disconnectedCallback() {
-    unsubscribe(this.subscription);
-    this.subscription = null;
+    unsubscribe(this.subscription); this.subscription = null;
     clearInterval(this.pollingInterval);
 }
 ```
 
-**errorCallback(error, stack)**
-- Catches errors from child components
-- Use to display a fallback UI
-```js
-errorCallback(error, stack) {
-    this.error = error.message;
-    console.error('Child component error:', stack);
-}
-```
-
 ---
 
-## Security
+## 15. Security — Server-side is the only real check
 
-### The Core Rule
-**UI security checks are UX, not security. Server-side enforcement in Apex is security.**
+UI security is UX. Server-side enforcement in Apex is security. Hiding a button behind `lwc:if={canEdit}` is for users — the Apex behind it MUST independently enforce permissions; otherwise any user can invoke it through the API.
 
-A button hidden behind `lwc:if={canEdit}` is a UX improvement, but if the Apex controller does not also check permissions, any user can call the Apex method directly via the API.
-
-### UI Permission Checks (UX Only)
 ```js
 import HAS_CASE_EDIT from '@salesforce/customPermission/Case_Edit_Permission';
-import { LightningElement } from 'lwc';
-
-export default class CaseActions extends LightningElement {
-    get canEditCase() {
-        return HAS_CASE_EDIT;
-    }
-}
+get canEditCase() { return HAS_CASE_EDIT; }
 ```
 ```html
 <template lwc:if={canEditCase}>
@@ -1031,363 +480,168 @@ export default class CaseActions extends LightningElement {
 </template>
 ```
 
-### Apex MUST Enforce CRUD/FLS
+Apex MUST still enforce CRUD/FLS independently:
 ```apex
-// Every Apex method must independently verify access
 if (!Schema.sObjectType.Case.isUpdateable()) {
     throw new AuraHandledException('Insufficient access to update Cases');
 }
 ```
 
-### Never Expose Sensitive Data
-- Do not return fields containing sensitive data (SSN, credit card, credentials) via `@AuraEnabled` methods unless specifically required
-- Use field-level security in SOQL: `WITH USER_MODE` enforces FLS at query time
-- Do not pass sensitive data to child components via `@api` if the child does not need it
-
-### @AuraEnabled Method Access
-- All `@AuraEnabled` methods are callable by any authenticated user who has access to the Apex class
-- Use Custom Permissions, Permission Sets, or explicit CRUD/FLS checks inside the method to restrict access
-- Never rely on the component being hidden in the UI as the security boundary
-
-### Lightning Locker / LWS
-- LWC runs in Lightning Web Security (LWS) in modern orgs
-- Cannot access DOM outside the component's shadow
-- Cannot directly call `window.parent` or manipulate other components' DOM
-- Third-party libraries must be compatible with LWS — verify before importing
+Any authenticated user with access to the Apex class can invoke any `@AuraEnabled` method on it. Restrict with permission sets, custom permissions, or explicit CRUD/FLS checks inside the method. Never rely on UI hiding as the security boundary. Don't surface sensitive fields (SSN, payment data, secrets) through `@AuraEnabled` unless explicitly required and FLS-gated.
 
 ---
 
-## Performance
+## 16. Lightning Web Security (LWS)
 
-### @wire and Caching
-- `@wire` with `cacheable=true` Apex methods caches responses in the client
-- Cache is per user, per Apex method, per input parameters
-- Cache improves performance for read-heavy pages
-- Cache can cause stale data — use `refreshApex` after mutations
+LWS is the JavaScript sandbox that replaces Locker Service in modern orgs. Implications:
 
-### Avoid Expensive Getters
-Getters run on every render. Avoid heavy computation:
-```js
-// WRONG — runs on every render:
-get filteredCases() {
-    return this.cases.filter(c => /* complex logic */); // runs every render
-}
+- Each component runs in its own JavaScript realm. DOM and JS objects do not leak across components.
+- Cannot access `window.parent`, `document.body` outside the component, or another component's DOM.
+- Cannot reach into a sibling LWC's shadow DOM.
+- Third-party libraries must be LWS-compatible — libraries that monkey-patch globals, use cross-realm prototype chains, or rely on `eval` / `Function` constructors often fail.
+- LWS applies surgical distortions to `window` / `document` / `Element`; some library code that touches these APIs needs adjustments or polyfills.
+- Static resources loaded with `loadScript` / `loadStyle` (from `lightning/platformResourceLoader`) run inside the sandbox.
 
-// CORRECT — compute once when data changes:
-@wire(getCases)
-wiredCasesHandler({ data }) {
-    if (data) {
-        this.filteredCases = data.filter(c => /* complex logic */); // computed once
-    }
-}
-```
-
-### Conditional Rendering
-- Use `lwc:if` to conditionally render — removes elements from DOM when false
-- Only add `style="display:none"` when you intentionally want the element in DOM (e.g., for ARIA or JS targeting)
-
-### Minimize Apex Calls
-- Do not make multiple sequential Apex calls on load if they can be combined into one
-- Use a wrapper object/class in Apex to return multiple datasets in one call
-```apex
-@AuraEnabled(cacheable=true)
-public static CaseDashboardData getDashboardData(Id accountId) {
-    CaseDashboardData result = new CaseDashboardData();
-    result.cases = [SELECT ... FROM Case WHERE AccountId = :accountId WITH USER_MODE];
-    result.account = [SELECT Name, Type FROM Account WHERE Id = :accountId WITH USER_MODE];
-    return result;
-}
-
-public class CaseDashboardData {
-    @AuraEnabled public List<Case> cases;
-    @AuraEnabled public Account account;
-}
-```
-
-### for:each vs iterator
-- Use `for:each` for standard list rendering
-- Use `iterator:it` when you need first/last item detection for styling
-```html
-<template iterator:it={cases}>
-    <li key={it.value.Id}
-        class={it.first ? 'first-item' : ''}>
-        {it.value.Subject}
-    </li>
-</template>
-```
-
-### Track Component Re-renders
-- Use browser DevTools > Performance tab to check render frequency
-- If a component re-renders more than expected, check getter logic and `@track` usage
+When LWS blocks a 3rd-party lib: replace the lib, wrap it in a custom LWC exposing only the needed surface, or check the vendor for an LWS-compatible build.
 
 ---
 
-## Accessibility
+## 17. Performance
 
-### Mandatory Requirements
-Every interactive element must be accessible:
-
-1. **Icon-only buttons**: must have `aria-label`
-   ```html
-   <lightning-button-icon
-       icon-name="utility:edit"
-       aria-label="Edit Case"
-       onclick={handleEdit}>
-   </lightning-button-icon>
-   ```
-
-2. **Form inputs**: use `lightning-input` and `lightning-combobox` which have built-in label support
-   ```html
-   <lightning-input
-       label="Case Subject"
-       value={subject}
-       onchange={handleSubjectChange}
-       required>
-   </lightning-input>
-   ```
-
-3. **Images and icons**: always set `alternative-text`
-   ```html
-   <lightning-icon
-       icon-name="standard:case"
-       alternative-text="Case icon"
-       size="small">
-   </lightning-icon>
-   ```
-
-4. **Keyboard navigation**: all interactive elements must be reachable by Tab and activatable by Enter/Space
-
-5. **ARIA roles**: use semantic HTML and ARIA roles where appropriate
-   ```html
-   <div role="status" aria-live="polite">{statusMessage}</div>
-   ```
-
-6. **Color contrast**: do not rely solely on color to convey information; pair with icons or text
-
-7. **Focus management**: when a modal opens, move focus to the modal; when it closes, return focus to the triggering element
-
-### Screen Reader Testing
-Test with:
-- NVDA + Chrome (Windows)
-- VoiceOver + Safari (macOS/iOS)
-- Verify that all dynamic content changes are announced
+- `@wire` + `cacheable=true` caches per user × method × parameter signature. Call `refreshApex` after mutations to avoid stale reads.
+- Avoid expensive getters — they run on every render. Move heavy work to the wire handler:
+  ```js
+  // WRONG — runs every render
+  get filteredCases() { return this.cases.filter(c => /* heavy */); }
+  // RIGHT — compute when data changes
+  @wire(getCases) wiredHandler({ data }) { if (data) this.filteredCases = data.filter(c => /* heavy */); }
+  ```
+- Combine Apex calls into one wrapper method when the page needs multiple datasets.
+- `lwc:if` removes element from DOM; `style="display:none"` keeps it mounted — only use when DOM presence is intentional.
+- Use `for:each` for standard lists; `iterator:it` when you need first/last detection.
+- ALWAYS set `key={item.Id}` on `for:each` root elements — without it LWC warns and may re-render incorrectly.
 
 ---
 
-## CSS and Styling
+## 18. Accessibility
 
-### SLDS First
-- Use Salesforce Lightning Design System (SLDS) utility classes before writing custom CSS
-- SLDS classes: `slds-var-p-around_medium`, `slds-text-heading_medium`, `slds-grid`, `slds-col`
-- Only write custom CSS when SLDS classes are insufficient
+1. **Icon-only buttons** — `aria-label`. `<lightning-button-icon icon-name="utility:edit" aria-label="Edit Case">`.
+2. **Form inputs** — use `lightning-input` / `lightning-combobox` (built-in labels).
+3. **Icons** — `alternative-text` on `lightning-icon`.
+4. **Keyboard** — every interactive element reachable by Tab; activatable by Enter/Space.
+5. **ARIA live** — `role="status" aria-live="polite"` for dynamic announcements.
+6. **Color is never the only signal** — pair with icon/text.
+7. **Focus management** — move focus into opened modals; return focus to trigger on close.
 
-### Scoped CSS
-- CSS in an LWC component is automatically scoped to that component
-- Cannot inadvertently style other components (Shadow DOM)
-- Cannot style standard `lightning-*` component internals directly (use CSS custom properties/design tokens instead)
-
-### CSS Custom Properties (Design Tokens)
-```css
-/* caseDashboardContainer.css */
-.case-card-wrapper {
-    background-color: var(--lwc-colorBackground, #f3f3f3);
-    border-radius: var(--lwc-borderRadiusMedium, 4px);
-    padding: var(--lwc-spacingSmall, 8px);
-}
-```
-
-### Do Not Use IDs for Styling
-- IDs are not stable in LWC (they get transformed)
-- Use class selectors only
-
-### No !important
-- Avoid `!important` — it makes CSS unmaintainable
-- If you need to override SLDS, use more specific selectors or CSS custom properties
+Test with NVDA + Chrome (Windows) and VoiceOver + Safari (macOS). Verify dynamic content changes are announced.
 
 ---
 
-## Jest Testing
+## 19. CSS, SLDS, and Design Tokens
 
-### Required Test Coverage
-Every container component must have Jest tests covering:
-1. Loading state — spinner shown while data is fetching
-2. Error state — error message shown when Apex returns error
-3. Success/data state — data rendered correctly when Apex returns data
-4. Empty state — empty message shown when Apex returns empty array
-5. User interaction — buttons, events dispatched
-6. Event handling — parent handles child events correctly
+- **SLDS first** — `slds-var-p-around_medium`, `slds-text-heading_medium`, `slds-grid`, `slds-col`. Custom CSS only when SLDS is insufficient.
+- **Scoped CSS** — `<bundle>.css` is automatically scoped to the component. You CANNOT style internals of standard `lightning-*` components directly; use CSS custom properties / SLDS 2 styling hooks instead.
+- **Design tokens:**
+  ```css
+  .case-card {
+      background-color: var(--lwc-colorBackground, #f3f3f3);
+      border-radius:    var(--lwc-borderRadiusMedium, 4px);
+      padding:          var(--lwc-spacingSmall, 8px);
+  }
+  ```
+- Don't use IDs for styling (LWC transforms them). Don't use `!important` — re-architect the selector or override via a CSS custom property. Don't hardcode colors when an SLDS token exists.
 
-### Test File Structure
+---
+
+## 20. Jest Testing
+
+Every container component has Jest tests covering: loading, error, success, empty states, every dispatched event, and key user interactions.
+
 ```
 force-app/main/default/lwc/caseDashboardContainer/
   __tests__/
     caseDashboardContainer.test.js
+    data/getCasesData.json
 ```
 
-### Jest Test Template
 ```js
 import { createElement } from 'lwc';
 import CaseDashboardContainer from 'c/caseDashboardContainer';
 import getCases from '@salesforce/apex/CaseDashboardController.getCases';
 import { registerApexTestWireAdapter } from '@salesforce/sfdx-lwc-jest';
 
-// Mock wire adapter for getCases
 const getCasesAdapter = registerApexTestWireAdapter(getCases);
-
-// Mock data
-const MOCK_CASES = [
-    { Id: '5001000000AAAA1', Subject: 'Test Case 1', Status: 'New', Priority: 'High' },
-    { Id: '5001000000AAAA2', Subject: 'Test Case 2', Status: 'Closed', Priority: 'Low' }
+const MOCK = [
+    { Id: '5001000000AAAA1', Subject: 'Test 1', Status: 'New',    Priority: 'High' },
+    { Id: '5001000000AAAA2', Subject: 'Test 2', Status: 'Closed', Priority: 'Low'  }
 ];
 
 describe('c-case-dashboard-container', () => {
     afterEach(() => {
-        // Clean up DOM after each test
-        while (document.body.firstChild) {
-            document.body.removeChild(document.body.firstChild);
-        }
+        while (document.body.firstChild) document.body.removeChild(document.body.firstChild);
         jest.clearAllMocks();
     });
 
-    // --- Loading State ---
-    it('shows loading spinner before wire data resolves', () => {
-        const element = createElement('c-case-dashboard-container', {
-            is: CaseDashboardContainer
-        });
-        document.body.appendChild(element);
-
-        const spinner = element.shadowRoot.querySelector('lightning-spinner');
-        expect(spinner).not.toBeNull();
+    it('shows spinner before wire resolves', () => {
+        const el = createElement('c-case-dashboard-container', { is: CaseDashboardContainer });
+        document.body.appendChild(el);
+        expect(el.shadowRoot.querySelector('lightning-spinner')).not.toBeNull();
     });
 
-    // --- Success/Data State ---
-    it('renders case cards when data is returned', async () => {
-        const element = createElement('c-case-dashboard-container', {
-            is: CaseDashboardContainer
-        });
-        document.body.appendChild(element);
-
-        getCasesAdapter.emit({ data: MOCK_CASES, error: undefined });
-        await Promise.resolve(); // wait for re-render
-
-        const caseCards = element.shadowRoot.querySelectorAll('c-case-card');
-        expect(caseCards.length).toBe(MOCK_CASES.length);
-    });
-
-    // --- Error State ---
-    it('shows error message when wire returns error', async () => {
-        const element = createElement('c-case-dashboard-container', {
-            is: CaseDashboardContainer
-        });
-        document.body.appendChild(element);
-
-        const mockError = { body: { message: 'Insufficient access to Cases' } };
-        getCasesAdapter.emit({ data: undefined, error: mockError });
+    it('renders cards when data resolves', async () => {
+        const el = createElement('c-case-dashboard-container', { is: CaseDashboardContainer });
+        document.body.appendChild(el);
+        getCasesAdapter.emit({ data: MOCK, error: undefined });
         await Promise.resolve();
-
-        const errorDiv = element.shadowRoot.querySelector('[data-id="error-message"]');
-        expect(errorDiv).not.toBeNull();
-        expect(errorDiv.textContent).toContain('Insufficient access');
+        expect(el.shadowRoot.querySelectorAll('c-case-card').length).toBe(MOCK.length);
     });
 
-    // --- Empty State ---
-    it('shows empty state when wire returns empty array', async () => {
-        const element = createElement('c-case-dashboard-container', {
-            is: CaseDashboardContainer
-        });
-        document.body.appendChild(element);
+    it('shows error on wire error', async () => {
+        const el = createElement('c-case-dashboard-container', { is: CaseDashboardContainer });
+        document.body.appendChild(el);
+        getCasesAdapter.emit({ data: undefined, error: { body: { message: 'Insufficient access' } } });
+        await Promise.resolve();
+        expect(el.shadowRoot.querySelector('[data-id="error-message"]').textContent).toContain('Insufficient access');
+    });
 
+    it('shows empty state on empty array', async () => {
+        const el = createElement('c-case-dashboard-container', { is: CaseDashboardContainer });
+        document.body.appendChild(el);
         getCasesAdapter.emit({ data: [], error: undefined });
         await Promise.resolve();
-
-        const emptyMessage = element.shadowRoot.querySelector('[data-id="empty-message"]');
-        expect(emptyMessage).not.toBeNull();
-    });
-
-    // --- Spinner Removed After Load ---
-    it('removes loading spinner after data resolves', async () => {
-        const element = createElement('c-case-dashboard-container', {
-            is: CaseDashboardContainer
-        });
-        document.body.appendChild(element);
-
-        getCasesAdapter.emit({ data: MOCK_CASES, error: undefined });
-        await Promise.resolve();
-
-        const spinner = element.shadowRoot.querySelector('lightning-spinner');
-        expect(spinner).toBeNull();
-    });
-
-    // --- Event Handling ---
-    it('handles caseselected event from child caseCard', async () => {
-        const element = createElement('c-case-dashboard-container', {
-            is: CaseDashboardContainer
-        });
-        document.body.appendChild(element);
-
-        getCasesAdapter.emit({ data: MOCK_CASES, error: undefined });
-        await Promise.resolve();
-
-        const mockHandler = jest.fn();
-        element.addEventListener('caseselected', mockHandler);
-
-        const caseCard = element.shadowRoot.querySelector('c-case-card');
-        caseCard.dispatchEvent(new CustomEvent('caseselected', {
-            detail: { caseId: MOCK_CASES[0].Id },
-            bubbles: true
-        }));
-
-        await Promise.resolve();
-        expect(mockHandler).toHaveBeenCalled();
+        expect(el.shadowRoot.querySelector('[data-id="empty-message"]')).not.toBeNull();
     });
 });
 ```
 
-### Mocking Imperative Apex
+Mocking imperative Apex:
 ```js
-import closeCase from '@salesforce/apex/CaseDashboardController.closeCase';
-
-jest.mock(
-    '@salesforce/apex/CaseDashboardController.closeCase',
-    () => ({ default: jest.fn() }),
-    { virtual: true }
-);
-
-it('calls closeCase Apex on confirm', async () => {
-    const { default: closeCaseMock } = require('@salesforce/apex/CaseDashboardController.closeCase');
-    closeCaseMock.mockResolvedValue(undefined); // simulate success
-
-    // ... create element, trigger handler, assert
-    expect(closeCaseMock).toHaveBeenCalledWith({ caseId: 'SOME_ID' });
-});
+jest.mock('@salesforce/apex/CaseDashboardController.closeCase',
+    () => ({ default: jest.fn() }), { virtual: true });
 ```
 
-### Test Data Best Practices
-- Keep mock data in a `__tests__/data/` folder as JSON files
-- Use realistic Salesforce IDs (18 characters) in mock data
-- Test both the happy path and edge cases (null, empty, partial data)
+LWC re-renders are async — always `await Promise.resolve()` (or chain multiple) after emitting/setting before asserting on the DOM. Keep large fixtures in `__tests__/data/*.json`. Use realistic 18-character Salesforce IDs.
 
 ---
 
-## Metadata XML Targets
+## 21. Metadata XML Targets
 
-Every LWC component must have a `.js-meta.xml` file that correctly declares which contexts the component can be used in.
+Common `<target>` values:
 
-### Common Targets Reference
-| Target | Usage |
+| Target | Use |
 |---|---|
-| `lightning__RecordPage` | Show on a standard or custom object record page |
-| `lightning__AppPage` | Show on a Lightning App page |
-| `lightning__HomePage` | Show on the Home page |
-| `lightning__FlowScreen` | Use inside a Screen Flow |
-| `lightning__UtilityBar` | Show in a utility bar |
-| `lightning__Tab` | Show as a Lightning tab |
+| `lightning__RecordPage` | Object record pages |
+| `lightning__AppPage` | App pages |
+| `lightning__HomePage` | Home page |
+| `lightning__FlowScreen` | Inside Screen Flows |
+| `lightning__UtilityBar` | Utility bar |
+| `lightning__Tab` | Lightning tab |
+| `lightningCommunity__Page` | Experience Cloud page |
 
-### .js-meta.xml Template (Record Page Component)
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
-    <apiVersion>59.0</apiVersion>
+    <apiVersion>66.0</apiVersion>
     <isExposed>true</isExposed>
     <targets>
         <target>lightning__RecordPage</target>
@@ -1395,89 +649,97 @@ Every LWC component must have a `.js-meta.xml` file that correctly declares whic
     </targets>
     <targetConfigs>
         <targetConfig targets="lightning__RecordPage">
-            <property
-                name="recordId"
-                type="String"
-                label="Record Id"
-                description="The Salesforce record Id. Set automatically on record pages."/>
+            <property name="recordId" type="String" label="Record Id"
+                      description="Auto-populated on record pages."/>
         </targetConfig>
-    </targetConfigs>
-</LightningComponentBundle>
-```
-
-### .js-meta.xml Template (Utility/Internal Component — not exposed to App Builder)
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
-    <apiVersion>59.0</apiVersion>
-    <isExposed>false</isExposed>
-</LightningComponentBundle>
-```
-
-### .js-meta.xml Template (Flow Screen Component)
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
-    <apiVersion>59.0</apiVersion>
-    <isExposed>true</isExposed>
-    <targets>
-        <target>lightning__FlowScreen</target>
-    </targets>
-    <targetConfigs>
         <targetConfig targets="lightning__FlowScreen">
-            <property name="caseId" type="String" role="inputOnly" label="Case Id"/>
+            <property name="caseId"    type="String"  role="inputOnly"  label="Case Id"/>
             <property name="isSuccess" type="Boolean" role="outputOnly" label="Is Success"/>
         </targetConfig>
     </targetConfigs>
 </LightningComponentBundle>
 ```
 
+For utility/internal-only bundles: `<isExposed>false</isExposed>` and omit `<targets>`.
+
 ---
 
-## File Structure and Naming
+## 22. File Structure and Naming
 
-### LWC Component File Structure
 ```
 force-app/main/default/lwc/
 ├── caseDashboardContainer/
 │   ├── caseDashboardContainer.html
 │   ├── caseDashboardContainer.js
 │   ├── caseDashboardContainer.js-meta.xml
-│   ├── caseDashboardContainer.css          (optional)
+│   ├── caseDashboardContainer.css            (optional)
 │   └── __tests__/
 │       ├── caseDashboardContainer.test.js
-│       └── data/
-│           └── getCasesData.json
-├── caseCard/
-│   ├── caseCard.html
-│   ├── caseCard.js
-│   ├── caseCard.js-meta.xml
-│   └── __tests__/
-│       └── caseCard.test.js
-└── errorUtils/
-    ├── errorUtils.js
-    └── errorUtils.js-meta.xml
+│       └── data/getCasesData.json
+├── caseCard/ ...
+└── errorUtils/ ...
 ```
 
-### Naming Conventions
 | Element | Convention | Example |
 |---|---|---|
-| Component folder | camelCase | `caseDashboardContainer` |
-| Component files | same as folder name | `caseDashboardContainer.html` |
-| Component in HTML | kebab-case with `c-` prefix | `<c-case-dashboard-container>` |
-| Apex controller | PascalCase, matches component | `CaseDashboardController` |
-| Custom event names | lowercase, hyphenated | `caseselected`, `form-submitted` |
-| MessageChannel | PascalCase + `__c` suffix | `CaseSelected__c` |
+| Bundle folder | camelCase, starts lowercase | `caseDashboardContainer` |
+| File names | match folder name | `caseDashboardContainer.html` |
+| Tag name | `c-` + kebab-case | `<c-case-dashboard-container>` |
+| Apex controller | PascalCase | `CaseDashboardController` |
+| Custom event names | lowercase, no camelCase | `caseselected`, `form-submitted` |
+| Message channel | PascalCase + `__c` | `CaseSelected__c` |
 
-### Component Folder Anti-Patterns
-- Incorrect: `CaseDashboardContainer/` (uppercase first letter — not allowed)
-- Incorrect: `case-dashboard-container/` (hyphens not allowed in folder name)
-- Incorrect: `case_dashboard_container/` (underscores not allowed)
-- Correct: `caseDashboardContainer/`
+Rejected: `CaseDashboardContainer/` (uppercase first), `case-dashboard-container/` (hyphens), `case_dashboard_container/` (underscores).
 
 ---
 
-## Common AI Mistakes to Avoid
+## 23. Definition of Done (LWC-specific)
+
+- [ ] Smart/dumb split documented; container owns state
+- [ ] All four states: loading, error, data, empty
+- [ ] `isLoading = true` initial; toggled in wire/imperative handler
+- [ ] Wire result stored for `refreshApex`; `refreshApex` called after every mutation
+- [ ] No hardcoded record IDs or org-specific values
+- [ ] `@api` properties validated; never mutated
+- [ ] Event names lowercase, no camelCase
+- [ ] `lwc:if` for conditional rendering (not `display:none`)
+- [ ] `key` set on every `for:each` root element
+- [ ] Apex: `with sharing`, `cacheable=true` only on reads, `WITH USER_MODE` + `as user`, `AuraHandledException`
+- [ ] Server-side CRUD/FLS independent of UI gating; no sensitive fields exposed
+- [ ] Interactive elements have label or `aria-label`; icons have `alternative-text`; keyboard navigation works
+- [ ] Jest tests in `__tests__/` cover loading, error, success, empty, interactions, events
+- [ ] `npm run test:unit` passes; coverage ≥85%
+- [ ] `.js-meta.xml` has correct `apiVersion`, `isExposed`, and `targets`
+- [ ] Deploys clean; no browser console errors
+
+---
+
+## 24. Validation Commands
+
+```bash
+# Jest
+npm run test:unit
+npm run test:unit -- --coverage
+npm run test:unit -- --testPathPattern caseDashboard
+
+# Deploy bundle + controller (check-only)
+sf project deploy start \
+   --metadata "LightningComponentBundle:caseDashboardContainer,ApexClass:CaseDashboardController" \
+   --target-org PlusGradeFullSB --check-only --wait 60
+
+# Retrieve from org
+sf project retrieve start \
+   --metadata "LightningComponentBundle:caseDashboardContainer" \
+   --target-org PlusGradeFullSB
+
+# Run Apex tests for the controller
+sf apex run test --class-names CaseDashboardControllerTest \
+   --target-org PlusGradeFullSB --wait 10 --result-format human
+```
+
+---
+
+## 25. Common AI Mistakes to Avoid
 
 | # | Mistake | Impact | Correct Approach |
 |---|---|---|---|
@@ -1504,133 +766,36 @@ force-app/main/default/lwc/
 
 ---
 
-## Definition of Done (LWC-specific)
+## 26. Empirical Findings & Implementation Notes
 
-Use this checklist for every LWC component before marking it complete.
+When Salesforce's documented approach doesn't work in this org / version / feature combination, the workaround goes here. Date-stamp every entry.
 
-### Architecture
-- [ ] Smart/dumb (container/presentational) split documented and followed
-- [ ] Data flow direction documented (which component owns which state)
-- [ ] Component architecture diagram or description included in PR description
+| # | Date | Documented approach | What actually works | Why / Context |
+|---|---|---|---|---|
 
-### Component Implementation
-- [ ] All four states implemented: loading, error, data, empty
-- [ ] `isLoading = true` set initially (before wire resolves)
-- [ ] Wire result stored for `refreshApex` calls
-- [ ] `refreshApex` called after all mutations
-- [ ] No hardcoded record IDs or org-specific values in JS
-- [ ] All `@api` properties validated before use
-- [ ] No `@api` property mutations inside the component
-- [ ] Event names are lowercase and descriptive
-- [ ] `lwc:if` used for conditional rendering (not `display:none`)
-- [ ] `key` attribute set on all `for:each` root elements
-
-### Apex Controller
-- [ ] `with sharing` on Apex class
-- [ ] `@AuraEnabled(cacheable=true)` ONLY on read-only methods
-- [ ] `@AuraEnabled` (no cacheable) on all mutation methods
-- [ ] CRUD/FLS enforced (Schema checks or `WITH USER_MODE`)
-- [ ] `AuraHandledException` thrown with user-safe message for all errors
-- [ ] Raw exception messages NOT exposed to client
-
-### Security
-- [ ] Server-side CRUD/FLS enforcement independent of UI guards
-- [ ] No sensitive data fields unnecessarily exposed via `@AuraEnabled` methods
-- [ ] Custom Permissions used if method access needs to be restricted by profile/permission set
-
-### Accessibility
-- [ ] All interactive elements have visible labels or `aria-label`
-- [ ] `lightning-icon` elements have `alternative-text`
-- [ ] Form inputs use `lightning-input` or `lightning-combobox` (built-in accessibility)
-- [ ] Keyboard navigation tested (Tab, Enter, Space)
-
-### Testing
-- [ ] Jest test file exists in `__tests__/` folder
-- [ ] Test covers: loading state, error state, success/data state, empty state
-- [ ] Test covers: all user interactions (clicks, form changes)
-- [ ] Test covers: custom events dispatched correctly
-- [ ] All tests pass: `npm run test:unit`
-- [ ] Code coverage acceptable (aim for 85%+)
-
-### Metadata
-- [ ] `.js-meta.xml` file present with correct `apiVersion`
-- [ ] `isExposed` set correctly (false for utility components)
-- [ ] `targets` declared for all intended deployment contexts
-- [ ] `targetConfigs` added if component has configurable App Builder properties
-
-### Deployment
-- [ ] Deployed to sandbox successfully
-- [ ] Rendered correctly in target context (Record Page, App Page, etc.)
-- [ ] No console errors in browser
-- [ ] Checked in multiple browsers (Chrome, Firefox, Safari)
-- [ ] Check-only deployment to production passes validation
+*(No entries yet — append a row the first time a documented pattern fails to behave as expected in this org.)*
 
 ---
 
-## Validation Commands
+## 27. Official References
 
-```bash
-# Run all Jest unit tests
-npm run test:unit
-
-# Run with coverage report
-npm run test:unit -- --coverage
-
-# Run a single test file
-npm run test:unit -- --testPathPattern caseDashboardContainer
-
-# Watch mode (re-runs on file change during development)
-npm run test:unit -- --watch
-
-# Deploy a single LWC component (check-only)
-sf project deploy start \
-  --metadata "LightningComponentBundle:caseDashboardContainer" \
-  --target-org <sandbox-alias> \
-  --check-only \
-  --wait 60
-
-# Deploy LWC + Apex controller together (check-only)
-sf project deploy start \
-  --metadata "LightningComponentBundle:caseDashboardContainer,ApexClass:CaseDashboardController" \
-  --target-org <sandbox-alias> \
-  --check-only \
-  --wait 60
-
-# Deploy (actual)
-sf project deploy start \
-  --metadata "LightningComponentBundle:caseDashboardContainer,ApexClass:CaseDashboardController" \
-  --target-org <production-alias> \
-  --wait 60
-
-# Retrieve component from org
-sf project retrieve start \
-  --metadata "LightningComponentBundle:caseDashboardContainer" \
-  --target-org <alias>
-
-# Run Apex tests for the controller
-sf apex run test \
-  --class-names CaseDashboardControllerTest \
-  --target-org <sandbox-alias> \
-  --wait 10 \
-  --result-format human
-
-# Lint check (if ESLint is configured)
-npm run lint
-```
+- [LWC Developer Guide](https://developer.salesforce.com/docs/component-library/documentation/en/lwc)
+- [LWC Platform Guide](https://developer.salesforce.com/docs/platform/lwc/guide/)
+- [Component Library — Reference](https://developer.salesforce.com/docs/component-library/overview/components)
+- [@api / Public Properties](https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.js_props_public)
+- [@wire — Wire Service](https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.use_wire_service)
+- [Lightning Data Service — UI Record API](https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.reference_lightning_ui_api_record)
+- [Composition / Events](https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.events)
+- [Lightning Navigation](https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.use_navigate)
+- [Lightning Message Service](https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.use_message_channel)
+- [Lightning Web Security](https://developer.salesforce.com/docs/platform/lightning-components-security/guide/intro-lws.html)
+- [Jest Testing for LWC](https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.unit_testing_using_jest_introduction)
+- [@AuraEnabled Annotation](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_annotation_AuraEnabled.htm)
+- [WITH USER_MODE in SOQL/DML](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_with_security_enforced.htm)
+- [SLDS Utilities](https://www.lightningdesignsystem.com/utilities/)
+- [trailheadapps/lwc-recipes](https://github.com/trailheadapps/lwc-recipes)
+- [forcedotcom/sf-skills `generating-lwc-components`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-lwc-components)
 
 ---
 
-## Official References
-
-- **LWC Developer Guide**: https://developer.salesforce.com/docs/component-library/documentation/en/lwc
-- **Lightning Web Security**: https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.security_locker_service_intro
-- **@api Properties**: https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.js_props_public
-- **Wire Service**: https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.use_wire_service
-- **LWC Quick Start Trailhead**: https://trailhead.salesforce.com/content/learn/projects/quick-start-lightning-web-components
-- **Lightning Navigation**: https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.use_navigate
-- **Lightning Message Service**: https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.use_message_channel
-- **LDS (createRecord, updateRecord)**: https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.reference_lightning_ui_api_record
-- **SLDS Utilities**: https://www.lightningdesignsystem.com/utilities/
-- **Jest Testing for LWC**: https://developer.salesforce.com/docs/component-library/documentation/en/lwc/lwc.unit_testing_using_jest_introduction
-- **@AuraEnabled Annotation**: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_annotation_AuraEnabled.htm
-- **WITH USER_MODE**: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_with_security_enforced.htm
+*LWC Guidelines | v3.0 | Last verified 2026-05-16*

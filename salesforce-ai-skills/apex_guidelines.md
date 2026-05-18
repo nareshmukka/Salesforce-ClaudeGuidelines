@@ -1,597 +1,285 @@
 # Apex Development Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Standalone guidelines for AI-assisted Apex development. Attach this file when writing, reviewing, or refactoring any Apex class, interface, or test.
+Canonical authoring contract for production Apex in this project — classes, triggers, async jobs, invocables, REST resources, and tests.
+
+**Verified against:** [Apex Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/) · [Apex Security & Sharing](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_security_sharing_understand.htm) · [Sharing keywords](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_bulk_sharing_creating_with_keywords.htm) · [WITH USER_MODE / SYSTEM_MODE](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_enforce_usermode.htm) · [Security.stripInaccessible](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_with_security_stripInaccessible.htm) · [Invocable Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_annotation_InvocableMethod.htm) · [Batch Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_batch_interface.htm) · [Queueable](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_queueing_jobs.htm) · [Named Credentials](https://help.salesforce.com/s/articleView?id=sf.named_credentials_about.htm) · [Governor Limits](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm) · [forcedotcom/sf-skills `generating-apex`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-apex) · [forcedotcom/sf-skills `generating-apex-test`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-apex-test). Last verified 2026-05-16.
+
+**Project defaults:** API `66.0` · Author `Naresh` · Title `Senior Salesforce Developer` · Org `PlusGradeFullSB` · Manifest `manifest/package-case-flow-optimization.xml` · Test classes deferred per project policy (do NOT generate tests inline unless the task is itself a test task).
 
 ---
 
-## Table of Contents
+## 1. Output Contract
 
-1. [Required Agent Output Contract](#1-required-agent-output-contract)
-2. [Apex Class Design](#2-apex-class-design)
-3. [with sharing / without sharing / inherited sharing](#3-with-sharing--without-sharing--inherited-sharing)
-4. [User Mode vs System Mode (SOQL/DML)](#4-user-mode-vs-system-mode-soqldml)
-5. [SOQL Security](#5-soql-security)
-6. [DML Security](#6-dml-security)
-7. [Security.stripInaccessible](#7-securitystripinaccessible)
-8. [Service / Domain / Selector Pattern](#8-service--domain--selector-pattern)
-9. [Invocable Apex](#9-invocable-apex)
-10. [Queueable, Batch, Schedulable](#10-queueable-batch-schedulable)
-11. [Callouts with Named Credentials](#11-callouts-with-named-credentials)
-12. [Exception Handling](#12-exception-handling)
-13. [Logging](#13-logging)
-14. [Test Classes](#14-test-classes)
-15. [Complete Working Examples](#15-complete-working-examples)
-16. [Common AI Mistakes to Avoid](#16-common-ai-mistakes-to-avoid)
-17. [Definition of Done](#17-definition-of-done)
-18. [Validation Commands](#18-validation-commands)
-19. [Official References](#19-official-references)
+Every Apex implementation response must include — before any code — a tight version of these:
+
+| Section | Content |
+|---|---|
+| Plan | Impacted classes (new/modified), interfaces, test classes, one-line behaviour description |
+| Files | `path — CREATE/MODIFY — purpose` lines |
+| Security | Sharing keyword chosen; entry-point CRUD/FLS strategy; justification for any `without sharing` |
+| Test strategy | Scenarios: happy / negative / bulk (200+) / async / security / mock callout. Min ≥75% with meaningful asserts |
+| Validation | The check-only `sf project deploy start` command and any targeted `sf apex run test` |
+| Rollback | Metadata dependencies; whether prior version is preserved |
+
+Skip the test-strategy section only if the project's "tests deferred" rule applies to this task and you say so explicitly.
 
 ---
 
-## 1. Required Agent Output Contract
+## 2. Class Header & ApexDoc
 
-Every Apex implementation response MUST include ALL of the following sections before any code is generated. This ensures the developer can review intent, security posture, and rollback strategy before accepting changes.
+Every class, interface, enum, and trigger handler MUST carry this header verbatim:
 
-### 1.1 Plan
-- List all impacted classes (new and modified)
-- List all interfaces affected
-- List all test classes required
-- Describe the change in plain language: what triggers it, what it does, what it affects
-
-### 1.2 Files to Create / Modify
-Explicit list with file path, action (create / modify), and one-line purpose:
-```
-force-app/main/default/classes/CaseService.cls          — MODIFY: add handleEscalation method
-force-app/main/default/classes/CaseServiceTest.cls      — MODIFY: add test for handleEscalation
-force-app/main/default/classes/CaseSelector.cls         — MODIFY: add getEscalatedCases query
+```apex
+/**
+ * Description: <one or two sentences — what this class does and why it exists>
+ * Developer: Naresh
+ * Title: Senior Salesforce Developer
+ */
 ```
 
-### 1.3 Security Notes
-- Declare sharing keyword chosen and justification
-- State which entry points enforce CRUD/FLS (via WITH USER_MODE, Security.stripInaccessible, or manual isCreateable/isUpdateable checks)
-- Call out any `without sharing` usage with explicit justification comment
-- Note if any fields or objects are accessed that the running user may not have permission to
+Every `public` / `protected` / `global` method MUST have an ApexDoc block:
 
-### 1.4 Test Strategy
-- List all scenarios to be covered:
-  - Happy path
-  - Negative / error path
-  - Bulk (200 records)
-  - Async (Test.startTest / Test.stopTest)
-  - Security (running as restricted user)
-  - Mock callout (if applicable)
-- State minimum coverage target (≥75% meaningful assertions)
-
-### 1.5 Validation Commands
-```bash
-sf project deploy start --manifest manifest/package.xml --target-org <alias> --check-only --test-level RunLocalTests --wait 60
-sf apex run test --class-names CaseServiceTest --target-org <alias> --result-format human
+```apex
+/**
+ * Description: Escalates open cases for the given account IDs.
+ * @param accountIds  Set of Account IDs whose open cases should be escalated
+ * @return            Number of cases successfully escalated
+ * @throws CaseDomainException  if the running user lacks Update permission
+ */
+public static Integer escalateOpenCases(Set<Id> accountIds) { ... }
 ```
 
-### 1.6 Rollback Notes
-- List any data migrations or field changes that cannot be auto-rolled back
-- Identify any metadata dependencies (custom fields, objects, permission sets) that must be deployed before this code
-- State whether a previous version of the class is preserved and how to restore it
+Private helpers: at least a one-line comment naming purpose.
 
 ---
 
-## 2. Apex Class Design
+## 3. Naming
 
-### 2.1 Single Responsibility Principle
-
-Each Apex class must have exactly one reason to change. Do not combine query logic, business logic, DML operations, and HTTP callouts in a single class. Split responsibilities across layers.
-
-### 2.2 Layered Architecture
-
-| Layer | Responsibility | Example Class |
+| Type | Pattern | Example |
 |---|---|---|
-| Entry Layer | Receives external input (controller, trigger handler, invocable, REST resource) | `CaseController`, `CaseTriggerHandler`, `CaseInvocable` |
-| Service Layer | Orchestrates domain + selector + DML; owns transaction boundary | `CaseService` |
-| Domain Layer | Business rules, validation, field-level logic; no direct DML | `CaseDomain` |
-| Selector Layer | All SOQL queries for one object; no business logic | `CaseSelector` |
+| Service | `{SObject}Service` | `CaseService` |
+| Selector | `{SObject}Selector` | `CaseSelector` |
+| Domain | `{SObject}Domain` | `CaseDomain` |
+| Batch | `{Descriptive}Batch` | `ClosedCaseArchiveBatch` |
+| Queueable | `{Descriptive}Queueable` or `{Descriptive}Job` | `CaseEscalationNotificationJob` |
+| Schedulable | `{Descriptive}Scheduler` | `ClosedCaseArchiveScheduler` |
+| Invocable | `{Descriptive}Invocable` | `EscalateCasesInvocable` |
+| Trigger | `{SObject}Trigger` (one per object) | `CaseTrigger` |
+| Trigger Handler | `{SObject}TriggerHandler` | `CaseTriggerHandler` |
+| DTO / Wrapper | `{Descriptive}DTO` / `{Descriptive}Wrapper` | `CaseMergeRequestDTO` |
+| Utility | `{Descriptive}Util` | `StringUtil` |
+| Interface | `I{Descriptive}` | `INotificationService` |
+| Abstract | `Abstract{Descriptive}` | `AbstractIntegrationService` |
+| Exception | `{Descriptive}Exception` | `CaseDomainException` |
+| REST Resource | `{SObject}RestResource` | `CaseRestResource` |
+| Test | `{ClassName}Test` | `CaseServiceTest` |
+| Mock | `{ClassName}Mock` | `CaseNotificationClientMock` |
+
+Identifier casing: classes `PascalCase` · methods/variables `camelCase` · constants `UPPER_SNAKE_CASE`. Method verbs lead (`get`, `create`, `process`, `validate`, `is`, `has`, `can`). Collections: lists are plural nouns (`accounts`), maps are `{value}By{key}` (`accountsById`), sets of IDs are `{noun}Ids`. No abbreviations (`acc`, `tks`, `rec`).
+
+---
+
+## 4. Layered Architecture
+
+| Layer | Owns | Must NOT contain |
+|---|---|---|
+| Entry (Trigger / Handler / Controller / Invocable / REST) | Routing, parameter validation, calling Service | Business rules, SOQL, DML, HTTP |
+| Service | Orchestration, transaction boundary, partial-success handling, logging | Inline SOQL, direct queries, parsing details |
+| Domain | Business rules, validations, field derivation on in-memory records | SOQL, DML, callouts |
+| Selector | All SOQL for ONE SObject; returns `List<SObject>` or `Map<Id, SObject>` | Business logic, DML, callouts |
+| Integration | HTTP callouts via Named Credentials; request/response parsing | Business decisions |
+
+Hard rules:
+- Triggers contain NO logic — they route to a single handler entry method per context.
+- Controllers and Invocables are thin wrappers — validate input, call Service, return result.
+- Selectors never call DML. Domains never query. Services never embed SOQL.
+- A class > 500 lines must be split.
+
+---
+
+## 5. Sharing Keywords
+
+Sharing keywords control **record-level visibility**. They do NOT enforce FLS or CRUD — those are separate (Section 6).
+
+| Keyword | Behaviour | Use when |
+|---|---|---|
+| `with sharing` | Enforces org sharing rules for the running user | UI / Flow / REST entry points; any class invoked in user context |
+| `without sharing` | Ignores sharing rules entirely | Batch, async, integration jobs that need full org access; requires justification comment |
+| `inherited sharing` | Inherits caller's sharing context | Utility / Selector classes reused in both user and system contexts |
 
 Rules:
-- No business logic in trigger handlers, controllers, or invocable wrappers directly — delegate immediately to service
-- Controllers must be thin: validate input, call service, return result
-- Selectors must not call DML
-- Domain classes must not query the database themselves (use injected data passed by service)
-
-### 2.3 Class-Level Documentation Header (REQUIRED on every class)
-
-```apex
-/**
- * Description: <purpose of this class — one or two sentences>
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-```
-
-This header is MANDATORY on every Apex class, interface, enum, and test class. AI agents must include it on every file they create or modify. No exceptions.
-
-### 2.4 Method-Level Documentation
-
-Every `public`, `protected`, and `global` method must include an ApexDoc comment block immediately above the method signature:
-
-```apex
-/**
- * Description: <what this method does in one sentence>
- * @param recordList  List of Case records to process
- * @param oldMap      Map of Case Id to old Case values (null for insert contexts)
- * @return            List of updated Case records with escalation fields set
- */
-public static List<Case> handleEscalation(List<Case> recordList, Map<Id, Case> oldMap) {
-    // implementation
-}
-```
-
-Private utility methods should have at minimum a single-line comment describing purpose.
-
-### 2.5 Naming Conventions
-
-| Type | Convention | Example |
-|---|---|---|
-| Class | PascalCase | `CaseService`, `AccountSelector` |
-| Method | camelCase | `getOpenCases`, `processEscalation` |
-| Variable | camelCase | `caseList`, `accountMap` |
-| Constant | UPPER_SNAKE_CASE | `MAX_RETRY_COUNT`, `DEFAULT_TIMEOUT_MS` |
-| Test class | `<ClassName>Test` | `CaseServiceTest` |
-| Inner class | PascalCase | `Request`, `Response`, `CaseWrapper` |
-
----
-
-## 3. with sharing / without sharing / inherited sharing
-
-The sharing keyword controls whether Salesforce's record-level sharing model (org-wide defaults, sharing rules, manual shares, role hierarchy) is enforced for the running user when executing SOQL and DML.
-
-### 3.1 Keyword Reference Table
-
-| Keyword | Behavior | When to Use |
-|---|---|---|
-| `with sharing` | Enforces org sharing rules for the running user. Records outside user's access are invisible in SOQL and blocked in DML. | User-initiated operations: LWC/Aura controllers, entry-layer services called from UI, Invocable methods called from Flow in user context |
-| `without sharing` | Ignores sharing rules entirely. Running user sees all records regardless of sharing model. **Does NOT bypass FLS or CRUD.** | Platform automation (batch, scheduled, queueable), system integrations, processes that need access to records the user does not own, integration user contexts |
-| `inherited sharing` | Inherits the sharing context of the calling class. If called from a `with sharing` class, sharing is enforced; if called from `without sharing`, it is not. | Utility and helper classes reused in both user and system contexts; Selector classes that serve both contexts |
-
-### 3.2 Rules and Enforcement
-
-- **Default to `with sharing`** for all new classes unless there is a specific documented reason not to.
-- **`without sharing` MUST be explicitly justified** with a code comment immediately on the class declaration line:
+- Default to `with sharing`.
+- `without sharing` MUST carry a justification comment immediately above the class declaration:
   ```apex
-  // without sharing: batch job requires full record access for reconciliation; no user context available
+  // without sharing: batch runs as system user; no user context; full org access required for reconciliation
   public without sharing class AccountReconciliationBatch implements Database.Batchable<SObject> {
   ```
-- **Selector and query classes MAY use `inherited sharing`** to be context-neutral and reusable across both user-initiated and system-initiated flows.
-- **Never use `without sharing` in LWC Apex controllers** or invocable entry points without adding compensating field-level and object-level access checks (CRUD/FLS) manually.
-- If a class is declared without any sharing keyword, it defaults to the sharing context of its caller — this is equivalent to `inherited sharing` but is LESS EXPLICIT. Always declare sharing explicitly.
+- Selectors should use `inherited sharing` to be context-neutral.
+- Never declare a class with NO sharing keyword — the implicit default is unsafe and unclear.
+- Never use `without sharing` in an LWC `@AuraEnabled` controller or `@RestResource` without compensating CRUD/FLS checks.
 
-### 3.3 Quick Decision Flowchart
+**Decision flow:**
 
 ```
-Is this an entry point called directly by a user action (LWC, button, Flow, REST)?
-  YES → use with sharing
-  NO → Is this a utility/helper class reused in multiple contexts?
-    YES → use inherited sharing
-    NO → Is this a background/automation class (batch, scheduled, integration)?
-      YES → use without sharing (with justification comment)
-      NO → default to with sharing
+Entry point invoked by user action (LWC, button, Flow, REST)?
+   YES -> with sharing
+   NO  -> Reused in multiple contexts (selector, utility)?
+          YES -> inherited sharing
+          NO  -> Background / integration / batch / scheduled?
+                 YES -> without sharing (+ justification)
+                 NO  -> with sharing
 ```
 
 ---
 
-## 4. User Mode vs System Mode (SOQL/DML)
+## 6. User Mode vs System Mode (FLS / CRUD)
 
-Sharing keywords control record visibility. User Mode vs System Mode controls **field-level security (FLS) and object-level CRUD** at the query/DML level.
+Salesforce API 56.0+ added explicit access-level modifiers for SOQL and DML. Use them at every entry point.
 
-### 4.1 SOQL Access Level Options
+| Mode | SOQL | DML | Effect |
+|---|---|---|---|
+| **User Mode** | `WITH USER_MODE` | `Database.<op>(records, AccessLevel.USER_MODE)` | Enforces FLS + CRUD + sharing for the running user. Excludes inaccessible fields; throws on inaccessible objects |
+| **System Mode** | `WITH SYSTEM_MODE` | `Database.<op>(records, AccessLevel.SYSTEM_MODE)` | Bypasses FLS / CRUD. Use only in explicitly `without sharing` background classes |
+| `WITH SECURITY_ENFORCED` | legacy | n/a | Deprecated — do NOT use in new code. Throws `QueryException` if user can't read any field. Replaced by `WITH USER_MODE` |
 
-**WITH USER_MODE** (recommended for all entry-point queries — Salesforce API 56.0+):
 ```apex
-List<Case> cases = [SELECT Id, Subject, Status FROM Case WHERE OwnerId = :userId WITH USER_MODE];
-```
-- Enforces FLS: fields the running user cannot read are excluded or an exception is thrown
-- Enforces sharing: respects the class's sharing keyword
-- Preferred approach for all user-context operations
+// SOQL — user mode (preferred at entry points)
+List<Case> cases = [SELECT Id, Subject FROM Case WHERE OwnerId = :uid WITH USER_MODE];
 
-**WITH SYSTEM_MODE** (explicit system context):
-```apex
-List<Case> cases = [SELECT Id, Subject FROM Case WITH SYSTEM_MODE];
-```
-- Bypasses FLS and shares checks
-- Use only in explicitly `without sharing` batch/async classes
+// SOQL — system mode (explicit override in a background class)
+List<Case> cases = [SELECT Id FROM Case WITH SYSTEM_MODE];
 
-**WITH SECURITY_ENFORCED** (legacy — being deprecated):
-```apex
-List<Case> cases = [SELECT Id, Subject FROM Case WITH SECURITY_ENFORCED];
-```
-- Throws `System.QueryException` if user cannot read a field in the SELECT
-- Being deprecated in favor of `WITH USER_MODE` — verify status in target org/release before use
-- Do NOT introduce this pattern in new code
-
-**Database.queryWithBinds() with AccessLevel.USER_MODE**:
-```apex
-Map<String, Object> bindMap = new Map<String, Object>{ 'statusVal' => 'Open' };
+// Dynamic SOQL — bind variables prevent injection
 List<Case> cases = Database.queryWithBinds(
-    'SELECT Id, Subject FROM Case WHERE Status = :statusVal WITH USER_MODE',
-    bindMap,
+    'SELECT Id FROM Case WHERE Status = :s WITH USER_MODE',
+    new Map<String, Object>{ 's' => 'Open' },
     AccessLevel.USER_MODE
 );
-```
-- Used when query string must be dynamically constructed
-- Prevents SOQL injection via bind map (safer than string concatenation)
 
-### 4.2 DML Access Level
-
-```apex
-// User Mode DML — enforces CRUD for running user
+// DML — user mode (enforces CRUD/FLS for running user)
 Database.insert(records, AccessLevel.USER_MODE);
 Database.update(records, AccessLevel.USER_MODE);
-Database.delete(records, AccessLevel.USER_MODE);
-
-// System Mode DML — bypasses CRUD checks
-Database.insert(records, AccessLevel.SYSTEM_MODE);
 ```
 
-### 4.3 Entry Point Rule
-
-At **every entry point** (controller method, invocable method, REST resource, trigger handler), explicitly choose the access level. Do NOT rely on default system-mode SOQL/DML silently bypassing security. Document your choice.
+Every entry point must make an explicit choice. Never rely on the silent default of pre-56.0 system-mode DML.
 
 ---
 
-## 5. SOQL Security
+## 7. SOQL — Bulk-Safe & Secure
 
-### 5.1 Core Rules
-
-1. **Use WITH USER_MODE** for all user-context queries at entry points
-2. **Never return more fields than needed** — only SELECT the fields your logic uses
-3. **Avoid SELECT \* patterns** — do not use dynamic SOQL to select all fields without FLS validation
-4. **Use bind variables** — NEVER concatenate user input into SOQL strings (SOQL injection risk)
-5. **Use field sets carefully** — field sets bypass FLS by default; verify behavior in your target org before using in security-sensitive contexts
-6. **Enforce LIMIT** — always set a LIMIT on queries that could return large result sets in non-batch contexts
-7. **Use Maps for lookups** — collect IDs into a Set, query once, put results in a Map; never query inside a loop
-
-### 5.2 Safe SOQL Example (Bind Variable)
-
-```apex
-// CORRECT: bind variable prevents SOQL injection
-String searchStatus = 'Open';
-List<Case> cases = [
-    SELECT Id, Subject, Status, Priority, OwnerId
-    FROM Case
-    WHERE Status = :searchStatus
-    AND AccountId = :accountId
-    WITH USER_MODE
-    ORDER BY CreatedDate DESC
-    LIMIT 200
-];
-
-// WRONG: string concatenation — SOQL injection vulnerability
-String query = 'SELECT Id FROM Case WHERE Status = \'' + userInput + '\''; // NEVER DO THIS
-List<Case> cases = Database.query(query);
-```
-
-### 5.3 Bulk-Safe Query Pattern
-
-```apex
-// Collect all IDs first
-Set<Id> accountIds = new Set<Id>();
-for (Case c : caseList) {
-    accountIds.add(c.AccountId);
-}
-
-// Single query outside the loop
-Map<Id, Account> accountMap = new Map<Id, Account>(
-    [SELECT Id, Name, Industry FROM Account WHERE Id IN :accountIds WITH USER_MODE]
-);
-
-// Now iterate and use the map
-for (Case c : caseList) {
-    Account acc = accountMap.get(c.AccountId);
-    if (acc != null) {
-        // process
-    }
-}
-```
-
----
-
-## 6. DML Security
-
-### 6.1 Manual CRUD Checks
-
-Before performing DML at an entry point, verify the running user has the required object permission:
-
-```apex
-/**
- * Description: Inserts cases after verifying user has create permission on Case object.
- * @param cases  List of Case records to insert
- */
-public static void createCases(List<Case> cases) {
-    if (!Schema.sObjectType.Case.isCreateable()) {
-        throw new CaseDomainException('Insufficient permissions to create Case records.');
-    }
-    insert cases;
-}
-```
-
-CRUD check methods:
-- `Schema.sObjectType.Case.isCreateable()` — can the user create Case records?
-- `Schema.sObjectType.Case.isUpdateable()` — can the user update Case records?
-- `Schema.sObjectType.Case.isDeletable()` — can the user delete Case records?
-- `Schema.sObjectType.Case.isAccessible()` — can the user read Case records?
-
-### 6.2 Field-Level Security Checks
-
-```apex
-// Check before setting a field
-if (Schema.sObjectType.Case.fields.Priority.isUpdateable()) {
-    caseRecord.Priority = 'High';
-}
-```
-
-### 6.3 Partial Success DML with Failure Logging
-
-```apex
-/**
- * Description: Inserts records with partial success; logs any failures via AppLogger.
- * @param records  List of records to insert
- */
-public static void insertWithLogging(List<SObject> records) {
-    List<Database.SaveResult> results = Database.insert(records, false);
-    for (Integer i = 0; i < results.size(); i++) {
-        Database.SaveResult sr = results[i];
-        if (!sr.isSuccess()) {
-            for (Database.Error err : sr.getErrors()) {
-                AppLogger.log(
-                    'CaseService.insertWithLogging',
-                    AppLogger.Severity.ERROR,
-                    'DML failure: ' + err.getMessage() + ' | Fields: ' + err.getFields(),
-                    null
-                );
-            }
-        }
-    }
-}
-```
-
----
-
-## 7. Security.stripInaccessible
-
-`Security.stripInaccessible` removes fields from SObject records that the running user does not have access to read or write. This is the recommended bulk-safe approach for FLS enforcement before DML.
-
-### 7.1 When to Use
-
-- Before inserting or updating records that were built from external/user-supplied input
-- When you cannot use `WITH USER_MODE` on the originating query (legacy code, dynamic SOQL)
-- When records are assembled in memory (not from a query) and need FLS enforcement before DML
-
-### 7.2 AccessType Options
-
-| AccessType | Use Before |
+| Rule | Rationale |
 |---|---|
-| `AccessType.READABLE` | Returning records to user — strips fields user cannot read |
-| `AccessType.CREATABLE` | Inserting new records — strips fields user cannot set on create |
-| `AccessType.UPDATABLE` | Updating existing records — strips fields user cannot modify |
-| `AccessType.UPSERTABLE` | Upsert operations — strips fields inaccessible for either create or update |
-
-### 7.3 Complete Working Example
+| No SOQL inside loops | 100-query governor limit |
+| No `SELECT *` (does not exist in SOQL) | Always list exact fields needed |
+| Bind variables for all user/dynamic input | Prevents SOQL injection |
+| `WITH USER_MODE` at entry-point queries | FLS enforcement |
+| `LIMIT` on any query that could return large sets | Heap/CPU safety |
+| Filter on indexed fields where possible | Selective query |
+| CMDT uses `getAll()` / `getInstance()` — NOT SOQL | Faster, no query consumed |
+| Use `Map<Id, SObject>` constructor for ID-keyed lookups | Avoids manual loops |
+| Use `Map<Id, List<SObject>>` to group child records by parent | Build the map in a single loop before processing |
+| Use relationship subqueries when parent+child needed | One SOQL instead of two |
+| Use `AggregateResult` with `GROUP BY` for rollups | Avoids querying + counting in Apex |
 
 ```apex
-/**
- * Description: Strips inaccessible fields from Case records before upsert, then performs DML.
- * @param cases  List of Case records assembled from external input
- */
-public static void upsertCasesSecurely(List<Case> cases) {
-    // Strip fields the running user cannot create or update
-    SObjectAccessDecision decision = Security.stripInaccessible(
-        AccessType.UPSERTABLE,
-        cases
-    );
+// Bulk-safe lookup
+Set<Id> accountIds = new Set<Id>();
+for (Case c : caseList) if (c.AccountId != null) accountIds.add(c.AccountId);
 
-    // Cast the cleaned records back to the concrete type
-    List<Case> cleanedCases = (List<Case>) decision.getRecords();
+Map<Id, Account> accountById = new Map<Id, Account>(
+    [SELECT Id, Name FROM Account WHERE Id IN :accountIds WITH USER_MODE]);
 
-    // Optionally log which fields were stripped for audit purposes
-    for (String fieldName : decision.getRemovedFields().get('Case')) {
-        AppLogger.log(
-            'CaseService.upsertCasesSecurely',
-            AppLogger.Severity.WARNING,
-            'Field stripped by stripInaccessible: ' + fieldName,
-            null
-        );
-    }
-
-    // Perform DML on cleaned records
-    Database.upsert(cleanedCases, false);
+for (Case c : caseList) {
+    Account acc = accountById.get(c.AccountId);
+    if (acc != null) { /* use acc */ }
 }
+
+// SOQL injection — WRONG vs RIGHT
+String q = 'SELECT Id FROM Case WHERE Status = \'' + userInput + '\'';  // WRONG
+List<Case> cases = Database.query(q);
+
+String status = userInput;                                                // RIGHT
+List<Case> cases = [SELECT Id FROM Case WHERE Status = :status WITH USER_MODE];
 ```
-
-### 7.4 Important Notes
-
-- `decision.getRecords()` returns `List<SObject>` — always cast to your concrete type
-- `decision.getRemovedFields()` returns `Map<String, Set<String>>` — keyed by SObject API name
-- Do NOT call `stripInaccessible` inside a loop — pass the entire list at once
-- This does NOT enforce CRUD (object-level create/update permission) — still check `isCreateable()` / `isUpdateable()` separately
 
 ---
 
-## 8. Service / Domain / Selector Pattern
+## 8. DML — Partial Success & CRUD
 
-### 8.1 Pattern Overview
+Default to **partial success** in bulk / automation paths — one bad record should not fail the batch. CRUD checks at entry points before DML.
 
-```
-Entry Point (Controller / Trigger Handler / Invocable)
-    └── Service Class (orchestration, transaction owner)
-            ├── Selector Class (SOQL queries)
-            └── Domain Class (business rules, validation)
-```
-
-### 8.2 Selector Class
-
-**Rules:**
-- All SOQL for one SObject lives here; nothing queries that object elsewhere
-- No business logic, no DML
-- Use `inherited sharing` to be context-neutral
-- Use `WITH USER_MODE` or `WITH SYSTEM_MODE` based on calling context (or accept AccessLevel parameter)
-- Return `List<SObject>` or `Map<Id, SObject>` — never return primitives from SOQL
+| CRUD method | Question |
+|---|---|
+| `Schema.sObjectType.Case.isCreateable()` | Can user create? |
+| `Schema.sObjectType.Case.isUpdateable()` | Can user update? |
+| `Schema.sObjectType.Case.isDeletable()` | Can user delete? |
+| `Schema.sObjectType.Case.isAccessible()` | Can user read? |
 
 ```apex
-/**
- * Description: Selector for Case queries — single source of truth for all Case SOQL.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-public inherited sharing class CaseSelector {
-
-    /**
-     * Description: Returns open cases for the given account IDs.
-     * @param accountIds  Set of Account IDs to query cases for
-     * @return            List of Case records with relevant fields
-     */
-    public List<Case> getOpenCasesByAccountId(Set<Id> accountIds) {
-        return [
-            SELECT Id, Subject, Status, Priority, OwnerId, AccountId, CreatedDate
-            FROM Case
-            WHERE AccountId IN :accountIds
-            AND Status != 'Closed'
-            WITH USER_MODE
-            ORDER BY CreatedDate DESC
-        ];
-    }
-
-    /**
-     * Description: Returns cases by ID set with full detail fields.
-     * @param caseIds  Set of Case IDs to fetch
-     * @return         Map of Case Id to Case record
-     */
-    public Map<Id, Case> getCasesById(Set<Id> caseIds) {
-        return new Map<Id, Case>(
-            [SELECT Id, Subject, Status, Priority, OwnerId, AccountId,
-                    EscalationReason__c, LastModifiedDate
-             FROM Case
-             WHERE Id IN :caseIds
-             WITH USER_MODE]
-        );
+if (!Schema.sObjectType.Case.isCreateable()) {
+    throw new CaseDomainException('Running user lacks Create permission on Case.');
+}
+List<Database.SaveResult> results = Database.update(records, false);
+for (Integer i = 0; i < results.size(); i++) {
+    if (!results[i].isSuccess()) {
+        AppLogger.log('CaseService.escalateOpenCases', AppLogger.Severity.ERROR,
+            'Update failed: ' + results[i].getErrors()[0].getMessage(), records[i].Id);
     }
 }
 ```
 
-### 8.3 Domain Class
+---
 
-**Rules:**
-- Contains all business rules, validation logic, field derivation
-- Receives SObject collections passed in by the service — does NOT query
-- Does NOT perform DML — returns modified records or throws exceptions
-- Stateless static methods are preferred; instantiate only if state is needed
+## 9. Security.stripInaccessible
+
+Bulk-safe FLS enforcement for records assembled in memory or sourced from external input — use when `WITH USER_MODE` on the originating query is not possible. Does NOT enforce CRUD (still call `isCreateable()` / `isUpdateable()`). Call once on the whole list; never inside a loop.
+
+| AccessType | Use before |
+|---|---|
+| `READABLE` | Returning records to the user |
+| `CREATABLE` | Insert |
+| `UPDATABLE` | Update |
+| `UPSERTABLE` | Upsert (strips fields inaccessible for either create or update) |
 
 ```apex
-/**
- * Description: Domain class for Case business rules and field validation.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-public with sharing class CaseDomain {
+SObjectAccessDecision decision = Security.stripInaccessible(AccessType.UPDATABLE, cases);
+List<Case> cleaned = (List<Case>) decision.getRecords();
+for (String f : decision.getRemovedFields().get('Case')) {
+    AppLogger.log('CaseService.process', AppLogger.Severity.WARNING, 'Field stripped: ' + f, null);
+}
+Database.update(cleaned, false);
+```
 
-    /**
-     * Description: Sets escalation fields on cases whose priority changed to Critical.
-     * @param newCases  New Case records from trigger or service
-     * @param oldMap    Map of Case Id to previous values (null for insert)
-     */
-    public static void applyEscalationRules(List<Case> newCases, Map<Id, Case> oldMap) {
-        for (Case c : newCases) {
-            Case oldCase = (oldMap != null) ? oldMap.get(c.Id) : null;
-            Boolean priorityChangedToCritical =
-                c.Priority == 'Critical' &&
-                (oldCase == null || oldCase.Priority != 'Critical');
+---
 
-            if (priorityChangedToCritical) {
-                c.EscalationReason__c = 'Priority set to Critical';
-                c.EscalationDate__c   = Date.today();
-            }
-        }
-    }
+## 10. Triggers (One Per Object)
 
-    /**
-     * Description: Validates that a Case has a Subject before insert.
-     * @param cases  List of Cases to validate
-     * @throws CaseDomainException if Subject is blank on any record
-     */
-    public static void validateRequiredFields(List<Case> cases) {
-        for (Case c : cases) {
-            if (String.isBlank(c.Subject)) {
-                c.addError('Subject is required for all new cases.');
-            }
+Project enforces a single trigger per SObject delegating to a handler. Trigger has NO logic — only `new CaseTriggerHandler().run();`. Handler routes by `Trigger.operationType` to Service entry methods. Manage recursion via field-value comparison against `Trigger.oldMap`, not a global static boolean (fragile across nested contexts).
+
+```apex
+trigger CaseTrigger on Case (before insert, before update, before delete,
+    after insert, after update, after delete, after undelete) {
+    new CaseTriggerHandler().run();
+}
+
+public with sharing class CaseTriggerHandler {
+    public void run() {
+        switch on Trigger.operationType {
+            when BEFORE_INSERT { CaseService.onBeforeInsert(Trigger.new); }
+            when BEFORE_UPDATE { CaseService.onBeforeUpdate(Trigger.new, (Map<Id, Case>) Trigger.oldMap); }
+            when AFTER_INSERT  { CaseService.onAfterInsert(Trigger.new); }
+            when AFTER_UPDATE  { CaseService.onAfterUpdate(Trigger.new, (Map<Id, Case>) Trigger.oldMap); }
         }
     }
 }
-```
 
-### 8.4 Service Class
-
-**Rules:**
-- Owns the transaction boundary: one public method = one logical operation
-- Calls Selector to get data, Domain to apply rules, then performs DML
-- Handles exceptions and logs failures
-- Does not contain SOQL directly — delegates to Selector
-
-```apex
-/**
- * Description: Service layer for Case operations — orchestrates domain logic, selectors, and DML.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-public with sharing class CaseService {
-
-    private static final CaseSelector selector = new CaseSelector();
-
-    /**
-     * Description: Processes Case records on before insert — validates fields and applies defaults.
-     * @param newCases  List of new Case records from trigger
-     */
-    public static void onBeforeInsert(List<Case> newCases) {
-        CaseDomain.validateRequiredFields(newCases);
-        CaseDomain.applyEscalationRules(newCases, null);
-    }
-
-    /**
-     * Description: Processes Case records on before update — detects changes and applies rules.
-     * @param newCases  New Case values
-     * @param oldMap    Previous Case values keyed by Id
-     */
-    public static void onBeforeUpdate(List<Case> newCases, Map<Id, Case> oldMap) {
-        CaseDomain.applyEscalationRules(newCases, oldMap);
-    }
-
-    /**
-     * Description: Escalates open cases for a given list of account IDs.
-     * @param accountIds  Set of Account IDs whose open cases should be escalated
-     */
-    public static void escalateOpenCases(Set<Id> accountIds) {
-        if (accountIds == null || accountIds.isEmpty()) return;
-
-        List<Case> openCases = selector.getOpenCasesByAccountId(accountIds);
-        if (openCases.isEmpty()) return;
-
-        CaseDomain.applyEscalationRules(openCases, null);
-
-        // Strip inaccessible fields before DML
-        SObjectAccessDecision decision = Security.stripInaccessible(
-            AccessType.UPDATABLE, openCases
-        );
-        List<Case> cleanedCases = (List<Case>) decision.getRecords();
-
-        List<Database.SaveResult> results = Database.update(cleanedCases, false);
-        for (Integer i = 0; i < results.size(); i++) {
-            if (!results[i].isSuccess()) {
-                AppLogger.log(
-                    'CaseService.escalateOpenCases',
-                    AppLogger.Severity.ERROR,
-                    'Update failed for Case: ' + cleanedCases[i].Id + ' | ' +
-                        results[i].getErrors()[0].getMessage(),
-                    cleanedCases[i].Id
-                );
-            }
+// Recursion-safe field-change detection
+public static void applyEscalation(List<Case> newCases, Map<Id, Case> oldMap) {
+    for (Case c : newCases) {
+        Case prior = (oldMap != null) ? oldMap.get(c.Id) : null;
+        if (c.Priority == 'Critical' && (prior == null || prior.Priority != 'Critical')) {
+            c.EscalationReason__c = 'Priority set to Critical';
+            c.EscalationDate__c   = Date.today();
         }
     }
 }
@@ -599,321 +287,153 @@ public with sharing class CaseService {
 
 ---
 
-## 9. Invocable Apex
+## 11. Invocable Apex
 
-### 9.1 Rules
-
-- Must use `@InvocableMethod` annotation with `label` and `description` attributes
-- Input and output MUST use inner classes annotated with `@InvocableVariable`
-- MUST accept `List<Request>` and return `List<Response>` — this is required for Flow bulkification
-- Enforce CRUD/FLS within the invocable — do NOT assume Flow enforces security (it does not for all contexts)
-- Never let exceptions propagate uncaught back to Flow — catch and return error status in the response
-- Do not perform business logic directly; delegate to the service layer
-
-### 9.2 Complete Working Example
+| Rule | Detail |
+|---|---|
+| `@InvocableMethod(label='…' description='…' category='…')` | Flow Builder display + grouping. Add `callout=true` if the method makes HTTP callouts |
+| Method = `public static` | Non-static or single-record signatures fail to compile |
+| I/O = `List<Request>` in, `List<Response>` out | Required for Flow bulkification |
+| `Request` / `Response` are inner classes; fields use `@InvocableVariable(label='…' …)` | `label` is required on every variable |
+| `@InvocableVariable` supported types | Primitives, `Id`, `SObject`, `List<T>`. No `Map`, `Set`, `Blob` |
+| Always return errors via Response — never let exceptions bubble | Bubbling fires the Flow Fault path. Catch + return `isSuccess=false`, `errorMessage`, `errorType` |
+| Delegate to Service — no business logic in the invocable | SRP |
 
 ```apex
-/**
- * Description: Invocable Apex for escalating open cases from a Flow.
- *              Delegates to CaseService; handles errors gracefully to prevent Flow failures.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
 public with sharing class EscalateCasesInvocable {
-
-    /**
-     * Description: Flow-callable method to escalate open cases for given Account IDs.
-     * @param requests  List of Request wrappers (required for bulkification)
-     * @return          List of Response wrappers with success/error status
-     */
-    @InvocableMethod(
-        label='Escalate Open Cases'
-        description='Escalates all open cases for the provided Account IDs. Returns success or error message per request.'
-        category='Case Management'
-    )
+    @InvocableMethod(label='Escalate Open Cases' category='Case Management'
+        description='Escalates all open cases for the provided Account IDs.')
     public static List<Response> escalateCases(List<Request> requests) {
         List<Response> responses = new List<Response>();
-
-        // Collect all account IDs across all requests (bulk-safe)
-        Set<Id> allAccountIds = new Set<Id>();
-        for (Request req : requests) {
-            if (req.accountId != null) {
-                allAccountIds.add(req.accountId);
-            }
-        }
+        Set<Id> accountIds = new Set<Id>();
+        for (Request r : requests) if (r.accountId != null) accountIds.add(r.accountId);
 
         try {
-            CaseService.escalateOpenCases(allAccountIds);
-            for (Request req : requests) {
-                Response res = new Response();
-                res.isSuccess = true;
-                res.errorMessage = null;
-                responses.add(res);
+            CaseService.escalateOpenCases(accountIds);
+            for (Integer i = 0; i < requests.size(); i++) {
+                Response r = new Response(); r.isSuccess = true; responses.add(r);
             }
         } catch (Exception ex) {
-            AppLogger.log(
-                'EscalateCasesInvocable.escalateCases',
-                AppLogger.Severity.ERROR,
-                ex.getMessage(),
-                null
-            );
-            for (Request req : requests) {
-                Response res = new Response();
-                res.isSuccess = false;
-                res.errorMessage = ex.getMessage();
-                responses.add(res);
+            AppLogger.log('EscalateCasesInvocable', AppLogger.Severity.ERROR, ex.getMessage(), null);
+            for (Integer i = 0; i < requests.size(); i++) {
+                Response r = new Response();
+                r.isSuccess = false; r.errorMessage = ex.getMessage(); r.errorType = ex.getTypeName();
+                responses.add(r);
             }
         }
-
         return responses;
     }
 
-    /**
-     * Description: Input wrapper for escalate cases invocable.
-     */
     public class Request {
-        @InvocableVariable(label='Account ID' description='ID of the Account whose cases should be escalated' required=true)
-        public Id accountId;
+        @InvocableVariable(label='Account ID' required=true) public Id accountId;
     }
-
-    /**
-     * Description: Output wrapper for escalate cases invocable.
-     */
     public class Response {
-        @InvocableVariable(label='Is Success' description='True if escalation succeeded; false if an error occurred')
-        public Boolean isSuccess;
-
-        @InvocableVariable(label='Error Message' description='Error details if isSuccess is false')
-        public String errorMessage;
+        @InvocableVariable(label='Is Success') public Boolean isSuccess;
+        @InvocableVariable(label='Error Message') public String errorMessage;
+        @InvocableVariable(label='Error Type') public String errorType;
     }
 }
 ```
 
 ---
 
-## 10. Queueable, Batch, Schedulable
+## 12. Async — Decision Matrix
 
-### 10.1 Queueable Apex
+| Scenario | Choose | Notes |
+|---|---|---|
+| Standard async work (chaining, callouts from trigger context) | **Queueable** | Returns Job ID; supports `Database.AllowsCallouts`; configurable delay via `AsyncOptions`; finalizer support |
+| Very large datasets (> 50k records) | **Batch Apex** | Chunked; max 5 concurrent; use `QueryLocator` for big scopes |
+| Modern alternative to Batch | **CursorStep** (`Database.Cursor`) | 2000-record chunks, no 5-job ceiling |
+| Recurring schedule | **Scheduled Flow** (preferred) or **Schedulable** | Schedulable should only dispatch to Batch / Queueable |
+| Post-job cleanup regardless of outcome | **`System.Finalizer`** attached to Queueable | Runs whether Queueable succeeded or failed |
+| Long-running callouts | **Continuation** | ≤3 per transaction, ≤3 parallel |
+| Delays > 10 minutes | `System.scheduleBatch()` | Schedules a Batch at a specific future time |
+| Legacy fire-and-forget | ~~`@future`~~ | **Do NOT use in new code.** Cannot chain; cannot be called from Batch; cannot accept non-primitive types. Replace with Queueable + Finalizer |
 
-Use Queueable for async operations that need to be chained or when you need to make callouts from a trigger context.
-
-**Rules:**
-- Implement `Queueable` interface (add `Database.AllowsCallouts` if making HTTP callouts)
-- Pass a correlation ID (job context identifier) in the constructor for log traceability
-- Keep execute() focused — do not jam multiple unrelated operations into one Queueable
-- Chain jobs carefully — avoid unbounded recursion in chained Queueables
+### Queueable — pass a correlation ID via the constructor so AppLog entries across the chain join
 
 ```apex
-/**
- * Description: Async job that sends case escalation notifications via external API.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
 public class CaseEscalationNotificationJob implements Queueable, Database.AllowsCallouts {
-
-    private final List<Id>  caseIds;
-    private final String    correlationId;
-
-    /**
-     * Description: Constructor for job initialization.
-     * @param caseIds        IDs of cases to notify about
-     * @param correlationId  Unique identifier for log correlation (e.g. trigger transaction ID)
-     */
-    public CaseEscalationNotificationJob(List<Id> caseIds, String correlationId) {
-        this.caseIds       = caseIds;
-        this.correlationId = correlationId;
+    private final List<Id> caseIds;
+    private final String   correlationId;
+    public CaseEscalationNotificationJob(List<Id> caseIds, String corrId) {
+        this.caseIds = caseIds; this.correlationId = corrId;
     }
-
-    /**
-     * Description: Async execute — processes case notifications and calls external API.
-     * @param ctx  Queueable context provided by the platform
-     */
     public void execute(QueueableContext ctx) {
-        AppLogger.log(
-            'CaseEscalationNotificationJob.execute',
-            AppLogger.Severity.INFO,
-            'Job started. CorrelationId: ' + correlationId + ' | Cases: ' + caseIds.size(),
-            null
-        );
-        try {
-            CaseService.sendEscalationNotifications(caseIds);
-        } catch (Exception ex) {
-            AppLogger.log(
-                'CaseEscalationNotificationJob.execute',
-                AppLogger.Severity.ERROR,
-                'Job failed. CorrelationId: ' + correlationId + ' | ' + ex.getMessage(),
-                null
-            );
+        try { CaseService.sendEscalationNotifications(caseIds); }
+        catch (Exception ex) {
+            AppLogger.log('CaseEscalationNotificationJob', AppLogger.Severity.ERROR,
+                'corr=' + correlationId + ' | ' + ex.getMessage(), null);
         }
     }
 }
+// Enqueue: System.enqueueJob(new CaseEscalationNotificationJob(caseIds, corrId));
 ```
 
-Enqueue from a trigger or service:
-```apex
-String corrId = UserInfo.getUserId() + '_' + System.now().getTime();
-System.enqueueJob(new CaseEscalationNotificationJob(caseIds, corrId));
-```
-
-### 10.2 Batch Apex
-
-Use Batch for processing > 50,000 records or for operations that exceed governor limits for a single transaction.
-
-**Rules:**
-- Implement `Database.Batchable<SObject>`
-- Keep `execute()` bulk-safe — no SOQL inside loops
-- Use `Database.executeBatch(job, 200)` — tune batch size based on workload (callouts require batch size = 1 per-callout Queueable workaround)
-- Implement `Database.Stateful` only when you need to accumulate state across batches (increases heap usage — use sparingly)
+### Batch — `Database.Stateful` only when accumulating across chunks; tune batch size, drop to 1 for per-record callouts
 
 ```apex
-/**
- * Description: Batch job to archive closed cases older than 1 year.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-// without sharing: batch runs as system user; no user context; justified for full org access
+// without sharing: batch runs as system user; full org access required for archive
 public without sharing class ClosedCaseArchiveBatch implements Database.Batchable<SObject> {
-
-    /**
-     * Description: Defines the scope — selects all closed cases older than 1 year.
-     * @param ctx  Batch context
-     * @return     QueryLocator for the batch
-     */
     public Database.QueryLocator start(Database.BatchableContext ctx) {
-        Date cutoffDate = Date.today().addYears(-1);
+        Date cutoff = Date.today().addYears(-1);
         return Database.getQueryLocator(
-            'SELECT Id, Subject, Status, CreatedDate FROM Case ' +
-            'WHERE Status = \'Closed\' AND CreatedDate < :cutoffDate'
-        );
+            'SELECT Id FROM Case WHERE Status = \'Closed\' AND CreatedDate < :cutoff');
     }
-
-    /**
-     * Description: Processes each batch of closed cases for archival.
-     * @param ctx     Batch context
-     * @param scope   Current batch of Case records
-     */
     public void execute(Database.BatchableContext ctx, List<Case> scope) {
         CaseService.archiveCases(scope);
     }
-
-    /**
-     * Description: Post-processing after all batches complete.
-     * @param ctx  Batch context
-     */
     public void finish(Database.BatchableContext ctx) {
-        AppLogger.log(
-            'ClosedCaseArchiveBatch.finish',
-            AppLogger.Severity.INFO,
-            'Batch job completed. JobId: ' + ctx.getJobId(),
-            null
-        );
+        AppLogger.log('ClosedCaseArchiveBatch', AppLogger.Severity.INFO, 'JobId=' + ctx.getJobId(), null);
     }
 }
 ```
 
-### 10.3 Schedulable Apex
-
-Delegate all heavy logic to a Batch or Queueable. The `execute()` method of a Schedulable should contain only the job dispatch call.
+### Schedulable — `execute()` does ONE thing: dispatch a Batch or Queueable
 
 ```apex
-/**
- * Description: Scheduler that fires the ClosedCaseArchiveBatch on a nightly schedule.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
 public class ClosedCaseArchiveScheduler implements Schedulable {
-
-    /**
-     * Description: Scheduled entry point — delegates all processing to batch job.
-     * @param ctx  Schedulable context
-     */
     public void execute(SchedulableContext ctx) {
         Database.executeBatch(new ClosedCaseArchiveBatch(), 200);
     }
 }
-```
-
-Schedule via Apex:
-```apex
-// Runs daily at 2:00 AM
-String cronExp = '0 0 2 * * ?';
-System.schedule('Nightly Case Archive', cronExp, new ClosedCaseArchiveScheduler());
+// System.schedule('Nightly Case Archive', '0 0 2 * * ?', new ClosedCaseArchiveScheduler());
 ```
 
 ---
 
-## 11. Callouts with Named Credentials
+## 13. Callouts — Named Credentials Only
 
-### 11.1 Rules
-
-- **ALWAYS use Named Credentials** for all HTTP callouts: `'callout:MyNamedCred/endpoint/path'`
-- **Never hardcode** URLs, API keys, tokens, usernames, or passwords in Apex code
-- **Never hardcode** in Custom Metadata Type or Custom Settings without proper access controls
-- Use **External Credentials** for OAuth 2.0 per-user authentication flows (available in API 57.0+ — verify in target org)
-- Always set a **timeout**: `req.setTimeout(30000)` — default timeout is 10 seconds; maximum is 120 seconds
-- Parse responses **defensively** — check status code before deserializing
-- Wrap callout logic in try/catch and log failures before re-throwing
-
-### 11.2 Complete HTTP Client Class Example
+Hard rules:
+- **All HTTP endpoints via Named Credentials**: `'callout:MyNamedCred/path'`. No hardcoded URLs, API keys, tokens, usernames, passwords — in code, Custom Settings, or CMDT.
+- Use **External Credentials** for OAuth flows.
+- Always set timeout: `req.setTimeout(30000)` (default 10s, max 120s).
+- Check status code BEFORE deserializing the body.
+- Wrap `Http().send()` in try/catch for `CalloutException`.
 
 ```apex
-/**
- * Description: HTTP client for the external case notification API.
- *              Uses Named Credentials for authentication; never stores credentials in code.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
 public with sharing class CaseNotificationClient {
-
-    private static final String NAMED_CRED   = 'callout:CaseNotificationAPI';
-    private static final Integer TIMEOUT_MS  = 30000;
-    private static final String CONTENT_TYPE = 'application/json';
-
-    /**
-     * Description: Posts an escalation event to the external notification service.
-     * @param caseId   Salesforce Case ID being escalated
-     * @param reason   Plain text escalation reason
-     * @return         True if the API accepted the notification; false otherwise
-     */
+    private static final String NAMED_CRED = 'callout:CaseNotificationAPI';
     public static Boolean sendEscalationNotification(Id caseId, String reason) {
         HttpRequest req = new HttpRequest();
         req.setEndpoint(NAMED_CRED + '/v1/escalations');
         req.setMethod('POST');
-        req.setHeader('Content-Type', CONTENT_TYPE);
-        req.setHeader('Accept', CONTENT_TYPE);
-        req.setTimeout(TIMEOUT_MS);
-
-        // Build request body — never concatenate user input directly into JSON strings
-        Map<String, Object> body = new Map<String, Object>{
-            'caseId' => String.valueOf(caseId),
-            'reason' => reason,
-            'timestamp' => System.now().formatGmt('yyyy-MM-dd\'T\'HH:mm:ss\'Z\'')
-        };
-        req.setBody(JSON.serialize(body));
+        req.setHeader('Content-Type', 'application/json');
+        req.setTimeout(30000);
+        req.setBody(JSON.serialize(new Map<String, Object>{
+            'caseId' => String.valueOf(caseId), 'reason' => reason
+        }));
 
         HttpResponse res;
-        try {
-            res = new Http().send(req);
-        } catch (CalloutException ex) {
-            AppLogger.log(
-                'CaseNotificationClient.sendEscalationNotification',
-                AppLogger.Severity.ERROR,
-                'Callout failed: ' + ex.getMessage(),
-                caseId
-            );
+        try { res = new Http().send(req); }
+        catch (CalloutException ex) {
+            AppLogger.log('CaseNotificationClient', AppLogger.Severity.ERROR,
+                'Callout failed: ' + ex.getMessage(), caseId);
             return false;
         }
-
-        if (res.getStatusCode() == 200 || res.getStatusCode() == 201) {
-            return true;
-        }
-
-        AppLogger.log(
-            'CaseNotificationClient.sendEscalationNotification',
-            AppLogger.Severity.ERROR,
-            'API returned non-success: HTTP ' + res.getStatusCode() + ' | ' + res.getBody(),
-            caseId
-        );
+        if (res.getStatusCode() == 200 || res.getStatusCode() == 201) return true;
+        AppLogger.log('CaseNotificationClient', AppLogger.Severity.ERROR,
+            'HTTP ' + res.getStatusCode() + ' | ' + res.getBody(), caseId);
         return false;
     }
 }
@@ -921,128 +441,59 @@ public with sharing class CaseNotificationClient {
 
 ---
 
-## 12. Exception Handling
+## 14. Exception Handling
 
-### 12.1 Custom Exception Classes
-
-Define domain-specific exceptions for every service domain. This makes error handling explicit and avoids catching broad `Exception` types unintentionally.
-
-```apex
-/**
- * Description: Custom exception for Case domain business rule violations.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-public class CaseDomainException extends Exception {}
-
-/**
- * Description: Custom exception for Case selector / data access failures.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-public class CaseSelectorException extends Exception {}
-```
-
-### 12.2 Rules
-
-- **Catch specific exception types** — avoid bare `catch(Exception e)` unless you are a top-level handler that must catch everything
-- **Never swallow exceptions silently** — always log before returning or re-throwing
-- **Use custom exceptions** to communicate business rule failures; use `System.DmlException` / `System.QueryException` for data layer errors
-- **Use finally** for cleanup (resetting static flags, closing resources)
-- **Re-throw with context** when escalating to a higher layer
-
-### 12.3 Exception Handling Pattern
+| Rule | Detail |
+|---|---|
+| Custom exception per domain | `public class CaseDomainException extends Exception {}` |
+| Catch specific type; reserve generic `Exception` for outermost handlers | Avoids hiding bugs |
+| Never swallow — log before returning or re-throwing | `AppLogger.log(...)` then act |
+| Re-throw with cause to preserve the chain | `throw new CaseDomainException('wrapped', ex);` |
+| `try/catch` only around code that can throw | DML, callouts, JSON parse, casts. Not assignments or arithmetic |
+| `@AuraEnabled` methods: rethrow as `AuraHandledException` with sanitized message | Internals stay server-side |
+| Invocable methods: return errors in `Response`, do NOT throw | Bubbling triggers the Flow Fault path |
 
 ```apex
-/**
- * Description: Creates cases with full exception handling and logging.
- * @param cases  List of Case records to create
- * @throws CaseDomainException  if CRUD check fails
- */
-public static void createCasesWithHandling(List<Case> cases) {
+public static void createCases(List<Case> cases) {
     if (!Schema.sObjectType.Case.isCreateable()) {
         throw new CaseDomainException('Running user lacks Create permission on Case.');
     }
-
-    List<Database.SaveResult> results;
-    try {
-        results = Database.insert(cases, false);
-    } catch (DmlException ex) {
-        AppLogger.log(
-            'CaseService.createCasesWithHandling',
-            AppLogger.Severity.ERROR,
-            'DML exception during insert: ' + ex.getMessage(),
-            null
-        );
+    try { Database.insert(cases, AccessLevel.USER_MODE); }
+    catch (DmlException ex) {
+        AppLogger.log('CaseService.createCases', AppLogger.Severity.ERROR, ex.getMessage(), null);
         throw new CaseDomainException('Case creation failed: ' + ex.getMessage(), ex);
-    } finally {
-        // Reset any static state flags here if applicable
-    }
-
-    // Log partial failures without throwing
-    for (Integer i = 0; i < results.size(); i++) {
-        if (!results[i].isSuccess()) {
-            String errorDetail = results[i].getErrors()[0].getMessage();
-            AppLogger.log(
-                'CaseService.createCasesWithHandling',
-                AppLogger.Severity.WARNING,
-                'Partial insert failure on record index ' + i + ': ' + errorDetail,
-                null
-            );
-        }
     }
 }
 ```
 
 ---
 
-## 13. Logging
+## 15. Logging — `AppLogger`
 
-### 13.1 Rules
-
-- Use a **centralized logging class** (`AppLogger`) — never use `System.debug()` as the sole logging mechanism in production code
-- Log parameters: class.method context, severity level, message, related record ID
-- Insert log records with `Database.insert(log, false)` — never let logging failures break business logic
-- **Never log PII** (names, email addresses, phone numbers, SSNs) or sensitive field values (passwords, tokens)
-- Log at the appropriate severity: INFO for normal milestones, WARNING for non-fatal issues, ERROR for failures
-
-### 13.2 AppLogger Class
+| Rule | Detail |
+|---|---|
+| Centralized logger to `App_Log__c` | No `System.debug()` as primary logging in production |
+| `Database.insert(log, false)` + own try/catch | Logging never breaks business logic |
+| No PII / secrets | Names, emails, phones, SSNs, tokens, passwords are forbidden in log message |
+| Severity | `INFO` (milestone) · `WARNING` (non-fatal) · `ERROR` (failure) |
+| Include `class.method` context + record ID | Lets queries on `App_Log__c` join by record |
 
 ```apex
-/**
- * Description: Centralized logging utility — writes App_Log__c records for audit and debugging.
- *              Uses Database.insert with false to ensure logging never blocks business logic.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
+// without sharing: logging must succeed regardless of running user's record access
 public without sharing class AppLogger {
-    // without sharing: logging must succeed regardless of running user's record access
-
     public enum Severity { INFO, WARNING, ERROR }
 
-    /**
-     * Description: Writes a single log entry to the App_Log__c custom object.
-     * @param context    Class and method name (e.g. 'CaseService.escalateOpenCases')
-     * @param severity   Severity level (INFO, WARNING, ERROR)
-     * @param message    Log message — do NOT include PII or secret values
-     * @param recordId   Related Salesforce record ID (optional, may be null)
-     */
     public static void log(String context, Severity severity, String message, Id recordId) {
         try {
-            App_Log__c logEntry = new App_Log__c(
+            App_Log__c entry = new App_Log__c(
                 Context__c   = context,
                 Severity__c  = severity.name(),
                 Message__c   = message != null ? message.abbreviate(32000) : '',
                 Record_Id__c = recordId != null ? String.valueOf(recordId) : null,
-                Timestamp__c = System.now()
-            );
-            Database.insert(logEntry, false);
+                Timestamp__c = System.now());
+            Database.insert(entry, false);
         } catch (Exception ex) {
-            // Last resort: surface to debug log only — do not propagate
-            System.debug(LoggingLevel.ERROR,
-                'AppLogger.log failed: ' + ex.getMessage() +
-                ' | Original context: ' + context + ' | ' + message
-            );
+            System.debug(LoggingLevel.ERROR, 'AppLogger failed: ' + ex.getMessage());
         }
     }
 }
@@ -1050,343 +501,138 @@ public without sharing class AppLogger {
 
 ---
 
-## 14. Test Classes
+## 16. Test Classes
 
-### 14.1 Core Rules
+**Project rule:** test classes are deferred until after sandbox functional testing. Do NOT generate tests inline with Apex changes unless the task is explicitly a testing task. When generating, follow the rules below.
 
-- Every Apex class must have a corresponding test class suffixed with `Test`
-- `@isTest` annotation is REQUIRED on every test class
-- `@TestSetup` is REQUIRED for any shared test data (avoids repetition and improves performance)
-- **Never use `SeeAllData=true`** unless dealing with legacy integration that cannot be rewritten — if used, document why with a code comment
-- Use **test data factories** (a dedicated `TestDataFactory` class) — never build test data inline in every test method
-- Follow the **AAA pattern**: Arrange → Act → Assert
-- **Assert specific values** — not just "no exception thrown"; use `System.assertEquals(expected, actual, 'Failure message')`
-
-### 14.2 Required Test Scenarios
-
-Every service/domain class test must cover:
-
-| Scenario | What to Verify |
+| Rule | Detail |
 |---|---|
-| Happy path | Expected output for valid input |
-| Negative / error path | Custom exception thrown for invalid input |
-| Bulk (200 records) | Logic handles 200 records without governor limit errors |
-| Async | Queueable/Batch behavior tested with `Test.startTest()` / `Test.stopTest()` |
-| Security | Running as a restricted user (via `System.runAs`) fails gracefully |
-| Mock callout | `HttpCalloutMock` used; no real callouts in test context |
+| `@isTest` on every test class | Required |
+| `@TestSetup` for shared data | Improves performance; no assertions or complex logic inside |
+| No `SeeAllData=true` | Hard-stop unless legacy contract demands it — document with a comment |
+| `TestDataFactory` for all data creation | Never build records inline in test methods |
+| AAA / Given-When-Then structure | One behaviour per test method |
+| `Assert.areEqual` / `Assert.isTrue` / `Assert.fail` | Use the `Assert` class (not legacy `System.assert*`) |
+| Test names: `should<Result>_When<Scenario>` | E.g. `shouldEscalate_WhenPriorityRisesToCritical` |
+| Bulk test = 200+ records (251 to cross the trigger batch boundary) | Required for any class processing collections |
+| `Test.startTest()` / `Test.stopTest()` around code under test | Resets governor limits; forces async |
+| `HttpCalloutMock` for all callouts | Set BEFORE `Test.startTest()` |
+| `System.runAs(restrictedUser)` for security tests | Validates `with sharing` / FLS paths |
+| Coverage: ≥75% deploy minimum, target 90%+, 100% for critical paths | Meaningful assertions, not just coverage |
 
-### 14.3 Test Data Factory Pattern
+### Factory + negative + mock patterns
 
 ```apex
-/**
- * Description: Factory for creating test data records consistently across all test classes.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
 @isTest
 public class TestDataFactory {
-
-    /**
-     * Description: Creates and inserts a list of Account records for testing.
-     * @param count  Number of accounts to create
-     * @return       List of inserted Account records
-     */
-    public static List<Account> createAccounts(Integer count) {
-        List<Account> accounts = new List<Account>();
-        for (Integer i = 0; i < count; i++) {
-            accounts.add(new Account(Name = 'Test Account ' + i, Industry = 'Technology'));
-        }
-        insert accounts;
-        return accounts;
-    }
-
-    /**
-     * Description: Creates and inserts Case records for the given account.
-     * @param accountId  Parent Account ID
-     * @param count      Number of cases to create
-     * @param status     Status value for all cases
-     * @return           List of inserted Case records
-     */
     public static List<Case> createCases(Id accountId, Integer count, String status) {
         List<Case> cases = new List<Case>();
         for (Integer i = 0; i < count; i++) {
-            cases.add(new Case(
-                Subject   = 'Test Case ' + i,
-                Status    = status,
-                Priority  = 'Medium',
-                AccountId = accountId
-            ));
+            cases.add(new Case(Subject='Test ' + i, Status=status, Priority='Medium', AccountId=accountId));
         }
         insert cases;
         return cases;
     }
 }
-```
 
-### 14.4 Mock Callout Pattern
+@isTest
+static void shouldThrow_WhenAccountIdNull() {
+    Test.startTest();
+    try {
+        CaseService.escalateOpenCases(null);
+        Assert.fail('Expected CaseDomainException');
+    } catch (CaseDomainException e) {
+        Assert.isTrue(e.getMessage().contains('cannot be null'), 'Wrong message');
+    }
+    Test.stopTest();
+}
 
-```apex
-/**
- * Description: Mock HTTP response for CaseNotificationClient unit tests.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
 @isTest
 public class CaseNotificationClientMock implements HttpCalloutMock {
-
-    private final Integer statusCode;
-    private final String  body;
-
-    public CaseNotificationClientMock(Integer statusCode, String body) {
-        this.statusCode = statusCode;
-        this.body       = body;
-    }
-
+    private final Integer statusCode; private final String body;
+    public CaseNotificationClientMock(Integer s, String b) { statusCode = s; body = b; }
     public HTTPResponse respond(HTTPRequest req) {
-        HttpResponse res = new HttpResponse();
-        res.setStatusCode(statusCode);
-        res.setBody(body);
-        return res;
+        HttpResponse r = new HttpResponse();
+        r.setStatusCode(statusCode); r.setBody(body); return r;
     }
 }
+// Test.setMock(HttpCalloutMock.class, new CaseNotificationClientMock(200, '{"status":"ok"}'));
 ```
+
+### What to test, by component
+
+| Component | Scenarios |
+|---|---|
+| Trigger | Bulk insert/update/delete (251+), recursion guard, field-change detection |
+| Service | Valid + invalid inputs, bulk, exception handling, security via `runAs` |
+| Controller / `@AuraEnabled` | Happy path, restricted user, exception → `AuraHandledException` |
+| Batch | start/execute/finish; `batchSize >= testRecordCount` (only one `execute()` invocation runs in test) |
+| Queueable | Bulkification, chain depth, callout mocks set BEFORE `Test.startTest()` |
+| Schedulable | Direct `execute(null)`, CRON via `CronTrigger` query |
+| Selector | Valid / null / empty inputs, bulk, field population, `runAs` for FLS |
+| Callout | Success, error, timeout responses |
+| Platform Event | `Test.enableChangeDataCapture()`, `Test.getEventBus().deliver()` |
 
 ---
 
-## 15. Complete Working Examples
+## 17. Validation Commands
 
-### 15.1 Full Service Class: CaseService
+```bash
+# Full check-only deploy with local tests (the project standard)
+sf project deploy start \
+  --manifest manifest/package-case-flow-optimization.xml \
+  --target-org PlusGradeFullSB \
+  --dry-run --test-level RunLocalTests --wait 60
 
-```apex
-/**
- * Description: Service layer for Case operations — orchestrates domain, selector, and DML.
- *              Owns transaction boundaries; delegates queries to CaseSelector and rules to CaseDomain.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-public with sharing class CaseService {
+# Run a specific test class
+sf apex run test \
+  --class-names CaseServiceTest \
+  --target-org PlusGradeFullSB \
+  --code-coverage --result-format human --wait 10
 
-    private static final CaseSelector selector = new CaseSelector();
+# Run multiple test classes
+sf apex run test \
+  --class-names CaseServiceTest,CaseSelectorTest,CaseDomainTest \
+  --target-org PlusGradeFullSB \
+  --result-format human
 
-    /**
-     * Description: Entry point for before insert trigger context.
-     * @param newCases  Newly inserted Case records from trigger
-     */
-    public static void onBeforeInsert(List<Case> newCases) {
-        CaseDomain.validateRequiredFields(newCases);
-        CaseDomain.applyEscalationRules(newCases, null);
-    }
-
-    /**
-     * Description: Entry point for before update trigger context.
-     * @param newCases  Updated Case records
-     * @param oldMap    Previous values for changed records
-     */
-    public static void onBeforeUpdate(List<Case> newCases, Map<Id, Case> oldMap) {
-        CaseDomain.applyEscalationRules(newCases, oldMap);
-    }
-
-    /**
-     * Description: Escalates open cases for provided account IDs; updates records and logs failures.
-     * @param accountIds  Set of Account IDs whose open cases should be escalated
-     */
-    public static void escalateOpenCases(Set<Id> accountIds) {
-        if (accountIds == null || accountIds.isEmpty()) return;
-
-        List<Case> openCases = selector.getOpenCasesByAccountId(accountIds);
-        if (openCases.isEmpty()) return;
-
-        CaseDomain.applyEscalationRules(openCases, null);
-
-        SObjectAccessDecision decision = Security.stripInaccessible(AccessType.UPDATABLE, openCases);
-        List<Case> cleanedCases = (List<Case>) decision.getRecords();
-
-        List<Database.SaveResult> results = Database.update(cleanedCases, false);
-        for (Integer i = 0; i < results.size(); i++) {
-            if (!results[i].isSuccess()) {
-                AppLogger.log(
-                    'CaseService.escalateOpenCases',
-                    AppLogger.Severity.ERROR,
-                    'Update failed: ' + results[i].getErrors()[0].getMessage(),
-                    cleanedCases[i].Id
-                );
-            }
-        }
-    }
-}
+# Retrieve a class before modifying
+sf project retrieve start \
+  --metadata "ApexClass:CaseService" \
+  --target-org PlusGradeFullSB
 ```
 
-### 15.2 Full Selector Class: CaseSelector
-
-```apex
-/**
- * Description: Selector for all Case SOQL — single source of truth for Case queries.
- *              Uses inherited sharing to be context-neutral; callers control sharing enforcement.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-public inherited sharing class CaseSelector {
-
-    /**
-     * Description: Returns open cases associated with the given account IDs.
-     * @param accountIds  Set of Account IDs to query
-     * @return            List of Case records
-     */
-    public List<Case> getOpenCasesByAccountId(Set<Id> accountIds) {
-        return [
-            SELECT Id, Subject, Status, Priority, OwnerId, AccountId,
-                   EscalationReason__c, EscalationDate__c
-            FROM Case
-            WHERE AccountId IN :accountIds
-            AND Status != 'Closed'
-            WITH USER_MODE
-            ORDER BY CreatedDate DESC
-        ];
-    }
-
-    /**
-     * Description: Returns a map of Case records by their IDs.
-     * @param caseIds  Set of Case IDs to fetch
-     * @return         Map of Case Id to Case record
-     */
-    public Map<Id, Case> getCasesById(Set<Id> caseIds) {
-        return new Map<Id, Case>(
-            [SELECT Id, Subject, Status, Priority, OwnerId, AccountId,
-                    EscalationReason__c, EscalationDate__c, LastModifiedDate
-             FROM Case
-             WHERE Id IN :caseIds
-             WITH USER_MODE]
-        );
-    }
-}
-```
-
-### 15.3 Full Test Class: CaseServiceTest
-
-```apex
-/**
- * Description: Test class for CaseService — covers happy path, negative, bulk, async, and mock callout.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-@isTest
-private class CaseServiceTest {
-
-    @TestSetup
-    static void setupData() {
-        List<Account> accounts = TestDataFactory.createAccounts(1);
-        TestDataFactory.createCases(accounts[0].Id, 5, 'New');
-    }
-
-    // ─── Happy Path ──────────────────────────────────────────────
-
-    @isTest
-    static void testEscalateOpenCases_happyPath() {
-        Account acc = [SELECT Id FROM Account LIMIT 1];
-        Set<Id> accountIds = new Set<Id>{ acc.Id };
-
-        Test.startTest();
-        CaseService.escalateOpenCases(accountIds);
-        Test.stopTest();
-
-        List<Case> updatedCases = [SELECT Id, EscalationReason__c FROM Case WHERE AccountId = :acc.Id];
-        System.assertEquals(5, updatedCases.size(), 'Expected 5 cases to be returned');
-        for (Case c : updatedCases) {
-            // Validate escalation was not incorrectly applied (priority was Medium, not Critical)
-            System.assertEquals(null, c.EscalationReason__c,
-                'EscalationReason should be null for non-Critical cases');
-        }
-    }
-
-    // ─── Negative Path ───────────────────────────────────────────
-
-    @isTest
-    static void testEscalateOpenCases_emptyInput() {
-        Test.startTest();
-        // Should not throw for empty input
-        CaseService.escalateOpenCases(new Set<Id>());
-        CaseService.escalateOpenCases(null);
-        Test.stopTest();
-        System.assert(true, 'No exception expected for empty/null input');
-    }
-
-    // ─── Bulk (200 records) ───────────────────────────────────────
-
-    @isTest
-    static void testEscalateOpenCases_bulk200Records() {
-        List<Account> bulkAccounts = TestDataFactory.createAccounts(1);
-        Account bulkAccount = bulkAccounts[0];
-        TestDataFactory.createCases(bulkAccount.Id, 200, 'New');
-
-        Set<Id> accountIds = new Set<Id>{ bulkAccount.Id };
-
-        Test.startTest();
-        CaseService.escalateOpenCases(accountIds);
-        Test.stopTest();
-
-        List<Case> result = [SELECT Id FROM Case WHERE AccountId = :bulkAccount.Id];
-        System.assertEquals(200, result.size(), 'Expected 200 cases to be processed');
-    }
-
-    // ─── Validation ───────────────────────────────────────────────
-
-    @isTest
-    static void testValidateRequiredFields_blankSubject() {
-        List<Case> cases = new List<Case>{
-            new Case(Status = 'New', Priority = 'Medium') // Subject intentionally missing
-        };
-        Boolean exceptionThrown = false;
-        try {
-            insert cases; // Trigger calls CaseDomain.validateRequiredFields via CaseService
-        } catch (DmlException ex) {
-            exceptionThrown = true;
-            System.assert(ex.getMessage().contains('Subject'),
-                'Exception should reference the Subject field');
-        }
-        System.assert(exceptionThrown, 'Expected DmlException for missing Subject');
-    }
-
-    // ─── Mock Callout ─────────────────────────────────────────────
-
-    @isTest
-    static void testSendEscalationNotification_successResponse() {
-        Test.setMock(HttpCalloutMock.class,
-            new CaseNotificationClientMock(200, '{"status":"accepted"}'));
-
-        Test.startTest();
-        Boolean result = CaseNotificationClient.sendEscalationNotification(
-            [SELECT Id FROM Case LIMIT 1].Id,
-            'Test escalation'
-        );
-        Test.stopTest();
-
-        System.assertEquals(true, result, 'Expected true for HTTP 200 response');
-    }
-
-    @isTest
-    static void testSendEscalationNotification_failureResponse() {
-        Test.setMock(HttpCalloutMock.class,
-            new CaseNotificationClientMock(500, '{"error":"internal server error"}'));
-
-        Test.startTest();
-        Boolean result = CaseNotificationClient.sendEscalationNotification(
-            [SELECT Id FROM Case LIMIT 1].Id,
-            'Test escalation'
-        );
-        Test.stopTest();
-
-        System.assertEquals(false, result, 'Expected false for HTTP 500 response');
-    }
-}
-```
+**Expected noise:** 13 pre-existing Opportunity test failures are known and do not block Case deployment.
 
 ---
 
-## 16. Common AI Mistakes to Avoid
+## 18. Definition of Done
 
-The following patterns are frequently generated by AI tools and MUST be caught in code review. If you see any of these in AI-generated output, reject and request a fix.
+- [ ] Class header (`Description` / `Developer: Naresh` / `Title: Senior Salesforce Developer`) on every new/modified class
+- [ ] ApexDoc on every public/global/protected method
+- [ ] Sharing keyword explicitly declared (no implicit default)
+- [ ] `without sharing` carries a justification comment on the line above the class declaration
+- [ ] No SOQL inside loops; no DML inside loops (anywhere — including transitive callees)
+- [ ] `WITH USER_MODE` at every entry-point query, OR explicit `WITH SYSTEM_MODE` in a justified background class
+- [ ] DML at entry points uses `AccessLevel.USER_MODE` or `stripInaccessible` before `Database.insert/update`
+- [ ] Bulk automation DML uses partial-success: `Database.insert(list, false)` + `SaveResult` inspection + AppLogger
+- [ ] Invocable methods: `public static`, `List<Request>` in / `List<Response>` out, errors returned in Response
+- [ ] All HTTP callouts use Named Credentials with explicit `setTimeout()`
+- [ ] Custom exception class defined for the domain
+- [ ] `AppLogger.log()` calls on every error path and significant info milestone
+- [ ] No hardcoded IDs, URLs, secrets — anywhere
+- [ ] No `@future` (use Queueable + Finalizer)
+- [ ] No `System.debug()` as primary logging in production paths
+- [ ] No `WITH SECURITY_ENFORCED` in new code (use `WITH USER_MODE`)
+- [ ] Class ≤ 500 lines (split if exceeded)
+- [ ] Check-only deploy passes with `RunLocalTests` (only the 13 known Opportunity failures)
+- [ ] If tests authored: `@TestSetup` + `TestDataFactory` + 200+ bulk + negative + async (`startTest/stopTest`) + mock callout + ≥75% coverage with meaningful asserts
 
-| # | Mistake | Correct Approach |
+---
+
+## 19. Common AI Mistakes to Avoid
+
+| # | Mistake | Correct approach |
 |---|---|---|
 | 1 | Placing business logic directly in trigger handler (if/else logic, field updates, SOQL in handler) | Delegate all logic to the service layer; handler only routes by context |
 | 2 | Using `without sharing` without justification comment | Every `without sharing` class must have a one-line justification comment |
@@ -1410,73 +656,34 @@ The following patterns are frequently generated by AI tools and MUST be caught i
 
 ---
 
-## 17. Definition of Done
+## 20. Empirical Findings & Implementation Notes
 
-Before marking any Apex task complete, verify every item on this checklist:
+When Salesforce's documented approach doesn't work in this org / version / feature combination, record the working alternative here. Date-stamp every entry.
 
-- [ ] Developer header (`Description`, `Developer: Naresh`, `Title: Senior Salesforce Developer`) on ALL new and modified classes
-- [ ] `with sharing`, `without sharing`, or `inherited sharing` explicitly declared on every class (no implicit sharing)
-- [ ] `without sharing` usage has a justification comment
-- [ ] CRUD/FLS enforced at all entry points (controller methods, invocable methods, REST resources)
-- [ ] No SOQL inside for loops anywhere in the class or its dependencies
-- [ ] No DML inside for loops anywhere in the class or its dependencies
-- [ ] Invocable methods accept `List<Request>` and return `List<Response>`
-- [ ] All HTTP callouts use Named Credentials (`callout:<CredentialName>/path`)
-- [ ] Custom exception classes defined for the domain (`extends Exception`)
-- [ ] `AppLogger.log()` calls present for all error and significant info paths
-- [ ] Test class includes: `@TestSetup`, `@isTest`, AAA pattern, 200-record bulk test, negative test, async test with `startTest/stopTest`, mock callout test (if applicable)
-- [ ] Test coverage is ≥ 75% with meaningful field-value assertions (not just "no exception")
-- [ ] Check-only deployment passes with `RunLocalTests`: `sf project deploy start --check-only --test-level RunLocalTests`
+| # | Date | Documented approach | What actually works | Why / Context |
+|---|---|---|---|---|
+
+*(No entries yet — append rows as production findings emerge.)*
 
 ---
 
-## 18. Validation Commands
+## 21. Official References
 
-```bash
-# Full check-only deployment with all local tests
-sf project deploy start \
-  --manifest manifest/package.xml \
-  --target-org <alias> \
-  --check-only \
-  --test-level RunLocalTests \
-  --wait 60
-
-# Run specific test class and display human-readable results
-sf apex run test \
-  --class-names CaseServiceTest \
-  --target-org <alias> \
-  --result-format human \
-  --wait 10
-
-# Run multiple test classes
-sf apex run test \
-  --class-names CaseServiceTest,CaseSelectorTest,CaseDomainTest \
-  --target-org <alias> \
-  --result-format human
-
-# Retrieve current version of a class before modifying
-sf project retrieve start \
-  --metadata "ApexClass:CaseService" \
-  --target-org <alias>
-
-# Check code coverage for a specific class
-sf apex get test \
-  --test-run-id <jobId> \
-  --target-org <alias> \
-  --result-format human
-```
+- [Apex Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/)
+- [Apex Security and Sharing](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_security_sharing_understand.htm)
+- [Sharing Keywords (with/without/inherited)](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_bulk_sharing_creating_with_keywords.htm)
+- [WITH USER_MODE / WITH SYSTEM_MODE](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_enforce_usermode.htm)
+- [Security.stripInaccessible](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_with_security_stripInaccessible.htm)
+- [Invocable Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_annotation_InvocableMethod.htm)
+- [Batch Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_batch_interface.htm)
+- [Queueable Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_queueing_jobs.htm)
+- [System.Finalizer](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_class_System_Finalizer.htm)
+- [Named Credentials](https://help.salesforce.com/s/articleView?id=sf.named_credentials_about.htm)
+- [Apex Governor Limits](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm)
+- [Apex Testing — Trailhead](https://trailhead.salesforce.com/content/learn/modules/apex_testing)
+- [forcedotcom/sf-skills `generating-apex`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-apex)
+- [forcedotcom/sf-skills `generating-apex-test`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-apex-test)
 
 ---
 
-## 19. Official References
-
-- Apex Developer Guide: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/
-- Apex Security and Sharing: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_security_sharing_understand.htm
-- Security.stripInaccessible: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_with_security_stripInaccessible.htm
-- Sharing Keywords (with/without/inherited): https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_bulk_sharing_creating_with_keywords.htm
-- Apex Testing: https://trailhead.salesforce.com/content/learn/modules/apex_testing
-- Invocable Apex: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_annotation_InvocableMethod.htm
-- Batch Apex: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_batch_interface.htm
-- Named Credentials: https://help.salesforce.com/s/articleView?id=sf.named_credentials_about.htm
-- Apex Governor Limits: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm
-- WITH USER_MODE / WITH SYSTEM_MODE: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_enforce_usermode.htm
+*Apex Development Guidelines | v3.0 | Last verified 2026-05-16*

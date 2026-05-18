@@ -1,894 +1,633 @@
-# Trigger Development Guidelines
+# Apex Trigger Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Standalone guidelines for Apex Trigger development. Attach this file when writing, reviewing, or refactoring any Salesforce Trigger or trigger handler.
+Authoritative rules for `.trigger` files and trigger handlers in this project. Attach this file to any task that creates, modifies, or reviews a Salesforce Apex trigger.
 
----
-
-## Table of Contents
-
-1. [Required Agent Output Contract](#1-required-agent-output-contract)
-2. [One Trigger Per Object — Mandatory Rule](#2-one-trigger-per-object--mandatory-rule)
-3. [Trigger Handler Pattern](#3-trigger-handler-pattern)
-4. [Context-Specific Methods](#4-context-specific-methods)
-5. [Recursion Guards](#5-recursion-guards)
-6. [Idempotency](#6-idempotency)
-7. [Change Detection Pattern](#7-change-detection-pattern)
-8. [Trigger + Flow Coexistence](#8-trigger--flow-coexistence)
-9. [Before vs After Decision Guide](#9-before-vs-after-decision-guide)
-10. [Delete / Undelete Handling](#10-delete--undelete-handling)
-11. [Bulk Safety](#11-bulk-safety)
-12. [Testing 200 Records](#12-testing-200-records)
-13. [Common AI Mistakes to Avoid](#13-common-ai-mistakes-to-avoid)
-14. [Definition of Done](#14-definition-of-done)
-15. [Validation Commands](#15-validation-commands)
-16. [Official References](#16-official-references)
+**Verified against:** [Apex Triggers Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers.htm) · [Trigger Best Practices](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_bp.htm) · [Bulk Trigger Idioms](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_bulk_idioms.htm) · [Trigger Context Variables](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_context_variables.htm) · [Order of Execution](https://help.salesforce.com/s/articleView?id=sf.flow_concepts_trigger_order_of_execution.htm) · [`forcedotcom/sf-skills` generating-apex](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-apex) · [`trailheadapps/agent-script-recipes` APEX_RULES](https://github.com/trailheadapps/agent-script-recipes/blob/main/.airules/APEX_RULES.md) · [Mitch Spano `apex-trigger-actions-framework`](https://github.com/mitchspano/apex-trigger-actions-framework). Last verified 2026-05-16.
 
 ---
 
-## 1. Required Agent Output Contract
+## 1. File Layout
 
-Every trigger implementation response MUST include ALL of the following sections before any code is generated. This ensures the developer can review scope, security posture, recursion strategy, and rollback plan before accepting the changes.
+One trigger file per object. One handler class (or one Trigger Actions metadata stack) behind it. Business logic lives in service / domain / selector classes — never in the trigger and never in the handler.
 
-### 1.1 Plan
-- State which object the trigger operates on (e.g., `Case`)
-- List all trigger contexts being implemented (e.g., `before insert`, `before update`, `after insert`)
-- List all contexts being explicitly excluded and why (e.g., `after undelete — not applicable to this use case`)
-- Describe what the trigger does in plain language
-
-### 1.2 Files to Create / Modify
-Explicit list with file path, action (create / modify), and one-line purpose:
 ```
-force-app/main/default/triggers/CaseTrigger.trigger       — CREATE: thin trigger entry point for Case
-force-app/main/default/classes/CaseTriggerHandler.cls     — CREATE: routes trigger events to service layer
-force-app/main/default/classes/CaseService.cls            — MODIFY: add onBeforeInsert, onAfterInsert methods
-force-app/main/default/classes/CaseServiceTest.cls        — MODIFY: add bulk trigger test scenarios
+force-app/main/default/triggers/CaseTrigger.trigger      # thin entry point
+force-app/main/default/classes/CaseTriggerHandler.cls    # routes by context, owns recursion guard
+force-app/main/default/classes/CaseService.cls           # business logic + DML
+force-app/main/default/classes/CaseSelector.cls          # all SOQL for Case
+force-app/main/default/classes/CaseDomain.cls            # in-memory validation + derivation
+force-app/main/default/classes/CaseServiceTest.cls       # bulk + change-detection + recursion tests
 ```
 
-### 1.3 Security Notes
-- Declare sharing keyword chosen for the handler class and justification
-- State which methods enforce CRUD/FLS (triggered via service layer, with USER_MODE queries)
-- Identify if any `without sharing` is used and why
+**Trigger Actions Framework (TAF) variant** — when adopted (Mitch Spano's framework):
 
-### 1.4 Recursion Guard Strategy
-- State which recursion guard mechanism will be used (static boolean, static Set<Id>, or both)
-- Explain why this approach is sufficient for this object's automation landscape
-- Document any known Flow + Trigger interactions on this object that require extra care
-
-### 1.5 Test Strategy
-Enumerate all test scenarios:
-- Bulk insert (200 records)
-- Bulk update (200 records) with change detection
-- Single record happy path
-- Negative / validation error path
-- All relevant trigger contexts (insert, update, delete, undelete as applicable)
-- Recursion guard test (verify no infinite loop)
-
-### 1.6 Validation Commands
-```bash
-sf project deploy start --manifest manifest/package.xml --target-org <alias> --check-only --test-level RunLocalTests --wait 60
-sf apex run test --class-names CaseServiceTest --target-org <alias> --result-format human
+```
+force-app/main/default/triggers/CaseTrigger.trigger      # body: new MetadataTriggerHandler().run();
+force-app/main/default/classes/TA_Case_SetDefaults.cls   # one class per concern per context
+force-app/main/default/customMetadata/Trigger_Action.TA_Case_SetDefaults.md-meta.xml   # registration
 ```
 
-### 1.7 Rollback Notes
-- State whether an existing trigger is being modified (and what the prior state was)
-- Identify any metadata dependencies (custom fields, custom objects, permission sets) needed before deployment
-- Confirm whether a previous version of the handler or service is preserved
+Either pattern is acceptable. Pick **one per object** and stay consistent.
 
 ---
 
-## 2. One Trigger Per Object — Mandatory Rule
+## 2. Required Agent Output Contract
 
-**There MUST be exactly ONE Apex trigger per Salesforce object. No exceptions.**
+Every trigger task response MUST include these sections before any code:
 
-### 2.1 Why This Rule Exists
+| # | Section | Required content |
+|---|---|---|
+| 1 | Plan | Object, contexts implemented, contexts excluded + why |
+| 2 | Files | Absolute paths + `CREATE`/`MODIFY` + one-line purpose |
+| 3 | Security | Sharing keyword + justification; `USER_MODE` plan for downstream SOQL/DML |
+| 4 | Recursion guard | Static-boolean vs `Set<Id>` vs field-value-comparison — and why |
+| 5 | Test strategy | Bulk-200 insert/update/delete, change-detection scenarios, recursion test, negative path |
+| 6 | Validation commands | `sf project deploy start --check-only --test-level RunLocalTests` |
+| 7 | Rollback | Prior handler preserved? Metadata dependencies? Plusgrade activation gate |
 
-When multiple triggers exist for the same object, Salesforce does NOT guarantee the order of execution between them. This leads to:
-- Non-deterministic behavior that is nearly impossible to test
-- Race conditions where one trigger undoes another's work
-- Debugging nightmares in production environments
-- Inconsistent behavior between sandbox refreshes
+For Plusgrade PlusGradeFullSB, §7 must confirm: **deploy as `status = Draft` for new flows, do NOT deactivate old triggers/flows; activation is manual.**
 
-### 2.2 The Correct Approach
+---
 
-One trigger file. One handler class. All contexts handled within the same handler. New requirements extend the existing handler — they do NOT create a second trigger file.
+## 3. One Trigger Per Object — Mandatory
 
-```
-CaseTrigger.trigger              ← ONE trigger file, never a second one
-CaseTriggerHandler.cls           ← Routes all contexts via switch statement
-CaseService.cls                  ← All business logic lives here
-```
+Salesforce does NOT guarantee execution order between multiple triggers on the same object. Two triggers on `Case` = non-deterministic behavior, race conditions, and untestable production failures.
 
-### 2.3 How to Check for Existing Triggers Before Creating a New One
-
-Always retrieve first:
+### 3.1 Audit before creating anything
 
 ```bash
-# Retrieve existing trigger for the object
-sf project retrieve start \
-  --metadata "ApexTrigger:CaseTrigger" \
-  --target-org <alias>
+sf project retrieve start --metadata "ApexTrigger:CaseTrigger" --target-org <alias>
 
-# List all triggers in the org (useful for audit)
 sf data query \
-  --query "SELECT Name, TableEnumOrId, Status FROM ApexTrigger ORDER BY TableEnumOrId" \
-  --target-org <alias> \
-  --result-format human
+   --query "SELECT Name, TableEnumOrId, Status FROM ApexTrigger ORDER BY TableEnumOrId" \
+   --target-org <alias> --result-format human
 ```
 
-If a trigger already exists for the object:
-1. Retrieve the existing trigger and handler
-2. Extend the existing handler with the new method
-3. Add the new context to the switch statement if it is not already there
-4. Do NOT create a second trigger file
-
-### 2.4 Enforcement
-
-If an AI agent proposes creating a second trigger for an object that already has one, **reject the output immediately** and instruct the agent to extend the existing handler instead.
+If a trigger already exists: retrieve it, extend its handler, add the new context to the dispatch switch. **Never create a second trigger file.** Reject any AI output that proposes one.
 
 ---
 
-## 3. Trigger Handler Pattern
+## 4. Thin Trigger Pattern
 
-The trigger handler pattern separates the trigger file (which cannot be unit-tested in isolation) from the handler class (which can), and delegates all business logic to the service layer (which is fully testable).
+The trigger file passes context variables to the handler. Zero business logic. Zero SOQL. Zero DML. Zero `if`.
 
-### 3.1 Architecture
-
+```apex
+// WRONG — logic in the trigger
+trigger CaseTrigger on Case (before insert) {
+   for (Case c : Trigger.new) {
+      if (c.Status == null) c.Status = 'New';        // belongs in domain class
+      Account a = [SELECT Name FROM Account WHERE Id = :c.AccountId];   // SOQL in loop
+   }
+}
 ```
-CaseTrigger.trigger
-    └── CaseTriggerHandler.cls (routes by context; owns recursion guard)
-            └── CaseService.cls (owns all business logic and DML)
-                    ├── CaseSelector.cls (all SOQL for Case)
-                    └── CaseDomain.cls (all validation and derivation for Case)
+
+```apex
+// RIGHT — thin dispatch, context vars passed explicitly
+trigger CaseTrigger on Case (
+   before insert, before update, before delete,
+   after insert,  after update,  after delete,
+   after undelete
+) {
+   CaseTriggerHandler.run(
+      Trigger.operationType,
+      Trigger.new, Trigger.newMap,
+      Trigger.old, Trigger.oldMap
+   );
+}
 ```
 
-### 3.2 Complete Implementation
+**Why pass context vars explicitly:** the handler becomes unit-testable. A test can call `CaseTriggerHandler.run(AFTER_UPDATE, mockNew, mockNewMap, mockOld, mockOldMap)` directly. Handlers that read `Trigger.new` / `Trigger.isAfter` from inside the class can only ever run through real DML.
 
-**Trigger file — thin; no logic whatsoever:**
+---
+
+## 5. Handler Class — Custom Pattern
+
+The handler routes by `TriggerOperation` enum, owns the recursion guard, delegates every context to a service method.
+
+```apex
+/**
+ * Handler for CaseTrigger. Routes execution by TriggerOperation. Owns recursion guard.
+ * Developer: Naresh — Senior Salesforce Developer
+ */
+public with sharing class CaseTriggerHandler {
+
+   @TestVisible private static Boolean isRunning = false;
+
+   public static void run(
+      System.TriggerOperation op,
+      List<Case> newList,  Map<Id, Case> newMap,
+      List<Case> oldList,  Map<Id, Case> oldMap
+   ) {
+      if (isRunning) return;
+      isRunning = true;
+      try {
+         switch on op {
+            when BEFORE_INSERT  { CaseService.onBeforeInsert(newList); }
+            when BEFORE_UPDATE  { CaseService.onBeforeUpdate(newList, oldMap); }
+            when BEFORE_DELETE  { CaseService.onBeforeDelete(oldList); }
+            when AFTER_INSERT   { CaseService.onAfterInsert(newList); }
+            when AFTER_UPDATE   { CaseService.onAfterUpdate(newList, oldMap); }
+            when AFTER_DELETE   { CaseService.onAfterDelete(oldList); }
+            when AFTER_UNDELETE { CaseService.onAfterUndelete(newList); }
+         }
+      } finally {
+         isRunning = false;
+      }
+   }
+}
+```
+
+### Design rationale
+
+| Decision | Why |
+|---|---|
+| `switch on Trigger.operationType` | Exhaustive, compiler-validated. Beats stacked `if (Trigger.isBefore && Trigger.isInsert)` |
+| `finally { isRunning = false; }` | Without it, an exception leaves the flag stuck True for the rest of the transaction |
+| `@TestVisible` on the guard | Tests can reset between scenarios without making it public API |
+| `with sharing` on handler | Entry point runs as the calling user. Elevation belongs in an isolated helper with a Custom Permission gate |
+| Context vars as parameters | Handler is testable without DML; decoupled from `Trigger.*` globals |
+
+---
+
+## 6. Handler Class — Trigger Actions Framework (TAF)
+
+TAF replaces the giant switch with a metadata table of action classes. **Adopt when** the object will have many independent concerns (5+ behaviors that should toggle independently per deployment, or admin-controlled enable/disable).
+
+### 6.1 Trigger body
 
 ```apex
 trigger CaseTrigger on Case (
-    before insert,
-    before update,
-    before delete,
-    after insert,
-    after update,
-    after delete,
-    after undelete
+   before insert, before update, before delete,
+   after insert,  after update,  after delete,
+   after undelete
 ) {
-    CaseTriggerHandler.run(
-        Trigger.operationType,
-        Trigger.new,
-        Trigger.newMap,
-        Trigger.old,
-        Trigger.oldMap
-    );
+   new MetadataTriggerHandler().run();
 }
 ```
 
-**Handler class — routes by context; owns recursion guard:**
+### 6.2 Action class — one concern per context
 
 ```apex
-/**
- * Description: Handler for CaseTrigger — routes execution to service layer by operation type.
- *              Contains recursion guard to prevent re-entrant trigger execution.
- * Developer: Naresh
- * Title: Senior Salesforce Developer
- */
-public with sharing class CaseTriggerHandler {
-
-    // Recursion guard: prevents re-entrant trigger execution within the same transaction
-    private static Boolean isRunning = false;
-
-    /**
-     * Description: Main entry point called by CaseTrigger.
-     *              Routes each trigger operation type to the appropriate service method.
-     * @param op      The trigger operation type (BEFORE_INSERT, AFTER_UPDATE, etc.)
-     * @param newList Trigger.new — records in their new state (null for delete contexts)
-     * @param newMap  Trigger.newMap — Id-to-new-record map (null for before insert and delete)
-     * @param oldList Trigger.old — records in their prior state (null for insert contexts)
-     * @param oldMap  Trigger.oldMap — Id-to-old-record map (null for insert contexts)
-     */
-    public static void run(
-        System.TriggerOperation op,
-        List<Case>    newList,
-        Map<Id, Case> newMap,
-        List<Case>    oldList,
-        Map<Id, Case> oldMap
-    ) {
-        if (isRunning) return;  // Guard: exit immediately if we are already inside a trigger invocation
-
-        isRunning = true;
-        try {
-            switch on op {
-                when BEFORE_INSERT  { CaseService.onBeforeInsert(newList); }
-                when BEFORE_UPDATE  { CaseService.onBeforeUpdate(newList, oldMap); }
-                when BEFORE_DELETE  { CaseService.onBeforeDelete(oldList); }
-                when AFTER_INSERT   { CaseService.onAfterInsert(newList); }
-                when AFTER_UPDATE   { CaseService.onAfterUpdate(newList, oldMap); }
-                when AFTER_DELETE   { CaseService.onAfterDelete(oldList); }
-                when AFTER_UNDELETE { CaseService.onAfterUndelete(newList); }
-            }
-        } finally {
-            // Reset in finally to ensure flag is cleared even if an exception is thrown
-            isRunning = false;
-        }
-    }
+public with sharing class TA_Case_SetDefaults implements TriggerAction.BeforeInsert {
+   public void beforeInsert(List<Case> newList) {
+      for (Case c : newList) {
+         if (String.isBlank(c.Status))   c.Status   = 'New';
+         if (String.isBlank(c.Origin))   c.Origin   = 'Web';
+         if (String.isBlank(c.Priority)) c.Priority = 'Medium';
+      }
+   }
 }
 ```
 
-### 3.3 Key Design Decisions
+### 6.3 Registration — without this, the action is dead code
 
-| Decision | Rationale |
+```xml
+<!-- customMetadata/Trigger_Action.TA_Case_SetDefaults.md-meta.xml -->
+<CustomMetadata xmlns="http://soap.sforce.com/2006/04/metadata">
+   <values><field>Apex_Class_Name__c</field>  <value xsi:type="xsd:string">TA_Case_SetDefaults</value></values>
+   <values><field>Object__c</field>           <value xsi:type="xsd:string">Case</value></values>
+   <values><field>Trigger_Context__c</field>  <value xsi:type="xsd:string">BeforeInsert</value></values>
+   <values><field>Order__c</field>            <value xsi:type="xsd:double">10</value></values>
+   <values><field>Bypass_Execution__c</field> <value xsi:type="xsd:boolean">false</value></values>
+</CustomMetadata>
+```
+
+### 6.4 TAF-specific rules
+
+- One action class = one concern = one context. A second concern needs a second class.
+- `Order__c` controls execution order within the same context. Use multiples of 10 so inserts later don't renumber everything.
+- `Bypass_Execution__c = true` disables one action without removal — the framework's incident escape hatch.
+- Name `TA_<SObject>_<Concern>` (see §15).
+- **Recursion in TAF:** prefer field-value comparison (§7.3) over static booleans — TAF's per-action structure makes shared static flags awkward.
+
+---
+
+## 7. Recursion Guards
+
+Salesforce automation is inherently recursive. Without a guard:
+
+| Pattern | Loop trigger |
 |---|---|
-| `switch on op` instead of `if/else if` | Cleaner, exhaustive, compiler-validated; easier to read and extend |
-| `finally` block resets `isRunning` | Ensures flag is reset even when an exception propagates; prevents permanently locked state |
-| Handler uses `with sharing` | Handler is an entry point; use user context unless the service explicitly needs otherwise |
-| No `Trigger.isInsert` / `Trigger.isUpdate` boolean checks | `TriggerOperation` enum is more explicit and maps 1:1 to contexts; prefer it |
-| All business logic in service class | Handler is testable indirectly through the trigger; service class is directly unit-testable |
+| After-update writes to same record | Trigger fires → service updates Case → trigger fires again → ∞ |
+| After-insert creates child whose trigger updates parent | Parent trigger fires from child trigger's DML |
+| Flow calls Apex action → Apex DMLs Case → Trigger fires → Apex action called again | Flow + Apex round-trip |
 
----
+Three guard styles. Pick by scenario.
 
-## 4. Context-Specific Methods
-
-### 4.1 Available Variables per Context
-
-| Context | Trigger.new | Trigger.newMap | Trigger.old | Trigger.oldMap |
-|---|---|---|---|---|
-| before insert | Available (no IDs yet) | Not available (no IDs) | Not available | Not available |
-| before update | Available | Available | Available | Available |
-| after insert | Available (IDs assigned) | Available | Not available | Not available |
-| after update | Available | Available | Available | Available |
-| before delete | Not available | Not available | Available | Available |
-| after delete | Not available | Not available | Available | Available |
-| after undelete | Available | Available | Not available | Not available |
-
-### 4.2 Rules Per Context
-
-**before insert:**
-- Use for: setting default field values, validation, field derivation from related records
-- Modify `Trigger.new` records directly — no DML needed (changes are committed automatically)
-- `Id` is NOT yet assigned — do not reference `c.Id` for before insert records
-- Do NOT query for duplicate checks using the record's own ID (it does not exist yet)
-
-**before update:**
-- Use for: field validation, preventing changes to locked records, computing derived fields
-- Modify `Trigger.new` records directly — changes are committed without DML
-- Use `oldMap.get(c.Id)` to compare previous values and detect what changed
-
-**after insert:**
-- Use for: creating related records, enqueueing async jobs, publishing platform events
-- Records now have IDs — safe to reference `c.Id`
-- Do NOT modify `Trigger.new` records here (changes will not be persisted without explicit DML)
-- Perform DML to create child records or related data
-
-**after update:**
-- Use for: cascading updates to related records, sending notifications, async processing
-- Build filtered lists of records where the relevant field actually changed before processing
-- Never update the same record that fired the trigger without a recursion guard
-
-**before delete:**
-- Use for: preventing deletion of records that should not be deleted (add error to record)
-- `Trigger.old` is the only available collection
-- Call `record.addError('Deletion blocked: ...')` to prevent the delete
-
-**after delete:**
-- Use for: archiving related data, cleaning up orphaned child records
-- `Trigger.old` and `Trigger.oldMap` are the only available collections
-
-**after undelete:**
-- Use for: restoring soft-deleted related records, re-associating records
-- `Trigger.new` and `Trigger.newMap` are available with the restored record IDs
-
----
-
-## 5. Recursion Guards
-
-### 5.1 Why Recursion Guards Are Needed
-
-Salesforce automation is recursive by nature. Common scenarios that cause re-entrant trigger execution:
-
-1. **Trigger updates a record → Workflow Rule / Flow fires → updates the same record → Trigger fires again**
-2. **After insert trigger creates a child record → child record's trigger fires parent logic**
-3. **Flow calls an Apex action → Apex performs DML → Trigger fires → Apex action called again**
-4. **Scheduled job updates records → Trigger fires → Queueable enqueued → Queueable updates records → Trigger fires again**
-
-Without a recursion guard, this produces infinite loops that consume governor limits and fail with `System.LimitException: Too many SOQL queries` or similar errors.
-
-### 5.2 Static Boolean Pattern
-
-The static boolean is the baseline recursion guard. Static variables persist for the lifetime of a single Apex transaction (not across transactions).
+### 7.1 Static boolean (simplest)
 
 ```apex
-public with sharing class CaseTriggerHandler {
+@TestVisible private static Boolean isRunning = false;
 
-    private static Boolean isRunning = false;
-
-    public static void run(...) {
-        if (isRunning) return;   // Short-circuit if already in progress
-
-        isRunning = true;
-        try {
-            // process trigger
-        } finally {
-            isRunning = false;   // Reset in finally to handle exceptions
-        }
-    }
+public static void run(...) {
+   if (isRunning) return;
+   isRunning = true;
+   try { /* dispatch */ } finally { isRunning = false; }
 }
 ```
 
-**When this is sufficient:** When your trigger logic causes downstream DML that re-fires the SAME trigger (e.g., after update trigger updates the Case record → trigger fires again). The second invocation is skipped entirely.
+**Use when:** any second invocation of the trigger should be skipped entirely. Most Case/Account/Opportunity scenarios.
+**Limitation:** blocks every re-entry, even legitimate ones.
 
-**Limitation:** This approach blocks ALL re-entrant processing. If a legitimate second pass is needed (e.g., the record changed materially in the interim), use the Set<Id> pattern instead.
-
-### 5.3 Processed IDs Pattern
-
-Use a `Set<Id>` to track which records have been processed when you need to allow re-entry for records NOT yet processed, but skip records already handled:
+### 7.2 Processed-IDs `Set<Id>`
 
 ```apex
-public with sharing class CaseTriggerHandler {
+@TestVisible private static Set<Id> processedIds = new Set<Id>();
 
-    private static Set<Id> processedIds = new Set<Id>();
-
-    public static void run(
-        System.TriggerOperation op,
-        List<Case>    newList,
-        Map<Id, Case> newMap,
-        List<Case>    oldList,
-        Map<Id, Case> oldMap
-    ) {
-        // Filter to only unprocessed records
-        List<Case> unprocessedCases = new List<Case>();
-        for (Case c : (newList != null ? newList : oldList)) {
-            if (c.Id != null && !processedIds.contains(c.Id)) {
-                unprocessedCases.add(c);
-            }
-        }
-
-        if (unprocessedCases.isEmpty()) return;
-
-        // Mark as processed before DML to prevent re-entry
-        for (Case c : unprocessedCases) {
-            processedIds.add(c.Id);
-        }
-
-        try {
-            switch on op {
-                when AFTER_UPDATE { CaseService.onAfterUpdate(unprocessedCases, oldMap); }
-                // other contexts...
-            }
-        } catch (Exception ex) {
-            // Remove from processedIds if processing failed — allow retry if needed
-            for (Case c : unprocessedCases) {
-                processedIds.remove(c.Id);
-            }
-            throw ex;
-        }
-    }
+public static void run(System.TriggerOperation op, List<Case> newList, ...) {
+   List<Case> toProcess = new List<Case>();
+   for (Case c : newList) {
+      if (c.Id != null && !processedIds.contains(c.Id)) {
+         toProcess.add(c);
+         processedIds.add(c.Id);       // mark BEFORE downstream DML
+      }
+   }
+   if (toProcess.isEmpty()) return;
+   /* dispatch with toProcess */
 }
 ```
 
-### 5.4 Thread Safety and Transaction Scope
+**Use when:** mixed batch — some records should re-process, others shouldn't.
 
-- Static variables are **transaction-scoped** — they are initialized fresh for every new Apex transaction
-- They are NOT shared between concurrent transactions (each transaction gets its own static context)
-- They ARE shared within a single transaction — which is exactly the behavior needed for recursion guards
-- After a transaction completes (or fails), static variables are destroyed and re-initialized on the next request
+### 7.3 Field-value comparison (preferred for TAF and Flow-coexistence)
 
----
-
-## 6. Idempotency
-
-Idempotency ensures that running the same trigger logic multiple times on the same record produces the same outcome as running it once. This is essential for reliability in Salesforce's multi-invocation environment.
-
-### 6.1 Why Idempotency Matters
-
-- Salesforce may invoke the same DML multiple times in a single save (e.g., validation rules, before/after, workflow re-evaluations)
-- Retry mechanisms in integrations can send the same record twice
-- Runbook-driven reruns of batch jobs may process the same records twice
-
-### 6.2 Change Detection for Updates
-
-Only process records where the relevant field actually changed:
+Don't remember "we already ran" with a flag. Check whether the field's current value differs from prior. Self-cleansing — no static state to leak.
 
 ```apex
 public static void onAfterUpdate(List<Case> newList, Map<Id, Case> oldMap) {
-    List<Case> escalatedCases = new List<Case>();
-    for (Case c : newList) {
-        Case oldCase = oldMap.get(c.Id);
-        // Only process if Priority actually changed to Critical in this update
-        if (c.Priority == 'Critical' && oldCase.Priority != 'Critical') {
-            escalatedCases.add(c);
-        }
-    }
-    if (!escalatedCases.isEmpty()) {
-        CaseService.handleEscalation(escalatedCases);
-    }
+   List<Case> escalated = new List<Case>();
+   for (Case c : newList) {
+      Case prior = oldMap.get(c.Id);
+      if (c.Priority == 'Critical' && prior.Priority != 'Critical') {
+         escalated.add(c);
+      }
+   }
+   if (!escalated.isEmpty()) CaseService.handleEscalation(escalated);
 }
 ```
 
-### 6.3 Set<Id> Transaction Guard
+**Use when:** the trigger reacts to specific field transitions. **This is the framework-agnostic guard preferred by Mitch Spano's TAF.**
 
-Prevent duplicate processing within a single transaction for records that appear in multiple DML batches:
+### 7.4 Transaction scope facts
+
+- Static variables persist for **one Apex transaction** — reset between separate DML calls.
+- Not shared between concurrent transactions — no cross-user pollution.
+- Shared inside one transaction — which is exactly the behavior the guard needs.
+- A thrown exception kills the transaction; the next transaction starts fresh regardless. `finally` only matters when the same transaction continues.
+
+---
+
+## 8. Context Routing
+
+### 8.1 Variables per context
+
+| Context | `Trigger.new` | `Trigger.newMap` | `Trigger.old` | `Trigger.oldMap` |
+|---|---|---|---|---|
+| `before insert` | yes (no Ids) | **no** (no Ids) | no | no |
+| `before update` | yes | yes | yes | yes |
+| `before delete` | no | no | yes | yes |
+| `after insert` | yes (Ids assigned) | yes | no | no |
+| `after update` | yes | yes | yes | yes |
+| `after delete` | no | no | yes | yes |
+| `after undelete` | yes (restored Ids) | yes | no | no |
+
+### 8.2 What belongs where
+
+| Need | Context | Why |
+|---|---|---|
+| Default field value | `before insert` | Modify `Trigger.new` directly — no DML, auto-committed |
+| Derive field from same record | `before insert` / `before update` | No DML required |
+| Validation blocking the save | `before *` | `record.addError()` only works in before contexts |
+| Create related child records | `after insert` / `after update` | Parent Id must exist |
+| Update parent record | `after insert` / `after update` | Gate with change detection + recursion guard |
+| Send email / publish Platform Event | `after *` | Only after commit is known |
+| HTTP callout | **never directly** | Enqueue a `Queueable implements Database.AllowsCallouts` from after context |
+| Prevent deletion | `before delete` | `addError()` blocks the DML |
+| Archive after deletion | `after delete` | Record is committed as deleted |
+| Restore related records | `after undelete` | Record's Id is restored |
+
+### 8.3 Hard rules
+
+- Never DML on the triggering record from a before context — modify `Trigger.new` in place; DML is automatic.
+- Never call `record.addError()` from an after context — silently ignored.
+- Never make an HTTP callout from a trigger — enqueue a Queueable from `after *`.
+- Never reference `Trigger.new` in a delete context, or `Trigger.old` in an insert context — `null`.
+- Never use `Trigger.newMap` in `before insert` — records have no Id yet, map is null.
+
+### 8.4 Don't declare contexts you don't handle
+
+Each declared context is a separate trigger invocation per transaction. Declaring `before insert` "for completeness" when no before-insert handler exists is wasted overhead — and in Plusgrade specifically, before-save logic on Case lives in `Case_BS_Normalize_Case` Flow, not in Apex.
 
 ```apex
-private static Set<Id> processedCaseIds = new Set<Id>();
+// WRONG — declares before contexts the handler doesn't own
+trigger CaseTrigger on Case (before insert, before update, after insert, after update) {
+   CaseTriggerHandler.run(...);   // handler has no BEFORE_* branches
+}
 
-public static void onAfterInsert(List<Case> newList) {
-    List<Case> toProcess = new List<Case>();
-    for (Case c : newList) {
-        if (!processedCaseIds.contains(c.Id)) {
-            toProcess.add(c);
-            processedCaseIds.add(c.Id);
-        }
-    }
-    if (!toProcess.isEmpty()) {
-        CaseService.onAfterInsert(toProcess);
-    }
+// RIGHT — declare only the contexts the handler actually owns
+trigger CaseTrigger on Case (after insert, after update, after delete, after undelete) {
+   CaseTriggerHandler.run(...);
 }
 ```
 
 ---
 
-## 7. Change Detection Pattern
+## 9. Change Detection — the Idempotency Lever
 
-Change detection is the practice of comparing `Trigger.new` values against `Trigger.oldMap` values to determine which records actually changed in a meaningful way. This is essential for:
+Every `after update` should filter to records where the relevant field actually changed.
 
-- Preventing unnecessary processing (performance)
-- Preventing infinite loops (safety)
-- Making trigger logic idempotent (correctness)
-
-### 7.1 Basic Field Change Detection
+### 9.1 Single-field
 
 ```apex
-List<Case> statusChangedCases = new List<Case>();
+List<Case> statusChanged = new List<Case>();
 for (Case c : newList) {
-    Case oldCase = oldMap.get(c.Id);
-    if (c.Status != oldCase.Status) {
-        statusChangedCases.add(c);
-    }
+   if (c.Status != oldMap.get(c.Id).Status) statusChanged.add(c);
 }
-if (!statusChangedCases.isEmpty()) {
-    CaseService.handleStatusChange(statusChangedCases, oldMap);
+if (!statusChanged.isEmpty()) CaseService.handleStatusChange(statusChanged, oldMap);
+```
+
+### 9.2 Multi-field
+
+```apex
+List<Case> changed = new List<Case>();
+for (Case c : newList) {
+   Case prior = oldMap.get(c.Id);
+   if (c.Priority != prior.Priority || c.Status != prior.Status || c.OwnerId != prior.OwnerId) {
+      changed.add(c);
+   }
 }
 ```
 
-### 7.2 Multi-Field Change Detection
-
-```apex
-List<Case> changedCases = new List<Case>();
-for (Case c : newList) {
-    Case old = oldMap.get(c.Id);
-    Boolean priorityChanged = c.Priority != old.Priority;
-    Boolean statusChanged   = c.Status   != old.Status;
-    Boolean ownerChanged    = c.OwnerId  != old.OwnerId;
-
-    if (priorityChanged || statusChanged || ownerChanged) {
-        changedCases.add(c);
-    }
-}
-if (!changedCases.isEmpty()) {
-    CaseService.onSignificantFieldChange(changedCases, oldMap);
-}
-```
-
-### 7.3 Helper Method Pattern
-
-Extract change detection into a reusable helper in the service or domain class:
+### 9.3 Transition-to helper
 
 ```apex
 /**
- * Description: Returns the subset of cases where Status changed to the target value.
- * @param newList      New Case values from trigger
- * @param oldMap       Previous Case values
- * @param targetStatus Status value to detect transition to
- * @return             List of Cases that transitioned to targetStatus
+ * Returns the subset of cases that transitioned TO targetStatus in this update.
  */
-public static List<Case> getStatusTransitions(
-    List<Case>    newList,
-    Map<Id, Case> oldMap,
-    String        targetStatus
+public static List<Case> transitionedTo(
+   List<Case> newList, Map<Id, Case> oldMap, String targetStatus
 ) {
-    List<Case> transitioned = new List<Case>();
-    for (Case c : newList) {
-        Case old = oldMap.get(c.Id);
-        if (c.Status == targetStatus && old.Status != targetStatus) {
-            transitioned.add(c);
-        }
-    }
-    return transitioned;
-}
-```
-
-Usage in the service:
-```apex
-public static void onAfterUpdate(List<Case> newList, Map<Id, Case> oldMap) {
-    List<Case> closedCases = getStatusTransitions(newList, oldMap, 'Closed');
-    if (!closedCases.isEmpty()) {
-        CaseService.archiveCases(closedCases);
-    }
-
-    List<Case> escalatedCases = getStatusTransitions(newList, oldMap, 'Escalated');
-    if (!escalatedCases.isEmpty()) {
-        CaseService.notifyEscalationTeam(escalatedCases);
-    }
+   List<Case> out = new List<Case>();
+   for (Case c : newList) {
+      Case prior = oldMap.get(c.Id);
+      if (c.Status == targetStatus && prior.Status != targetStatus) out.add(c);
+   }
+   return out;
 }
 ```
 
 ---
 
-## 8. Trigger + Flow Coexistence
+## 10. Trigger + Flow Coexistence
 
-Salesforce orgs frequently have both Apex Triggers and Record-Triggered Flows automating the same objects. This creates coordination requirements.
+Plusgrade orgs run both triggers and Record-Triggered Flows on the same objects. Coordination is mandatory.
 
-### 8.1 Order of Execution (Summary)
+### 10.1 Order of Execution (simplified)
 
-For a single record save, the Salesforce order of execution includes (simplified):
 1. System validation rules
-2. Apex before triggers
-3. Record-triggered flows (before-save)
+2. Apex **before** triggers
+3. Record-triggered Flows (**before-save**)
 4. Assignment rules, auto-response rules
 5. Workflow rules, processes
 6. Escalation rules
-7. Apex after triggers
-8. Record-triggered flows (after-save)
-9. Post-commit logic (emails, async)
+7. Apex **after** triggers
+8. Record-triggered Flows (**after-save**)
+9. Post-commit (emails, async)
 
-For the authoritative and complete order, always verify at:
-https://help.salesforce.com/s/articleView?id=sf.flow_concepts_trigger_order_of_execution.htm
+Authoritative order: <https://help.salesforce.com/s/articleView?id=sf.flow_concepts_trigger_order_of_execution.htm>
 
-### 8.2 Common Conflict Scenarios
+### 10.2 Conflict scenarios
 
 | Scenario | Risk | Resolution |
 |---|---|---|
-| Trigger sets Field A → Flow reads Field A | Generally safe if trigger is before-save and flow is after-save | Document in design notes; test the combined behavior |
-| Trigger fires → Flow does DML on related record → Trigger fires again | Infinite loop | Add recursion guard in trigger; add entry condition in flow |
-| Flow sets Field A → Trigger reads Field A in after context | Flow before-save values are visible; after-save may cause second trigger invocation | Use change detection to avoid reprocessing |
-| Both trigger and flow create child records | Duplicate child records created | Assign ownership clearly: only one automation creates each record type |
+| Trigger sets Field A → before-save Flow reads A | Generally safe — trigger before runs first | Document ownership |
+| Trigger fires → after-save Flow DMLs related record → that record's trigger fires the parent | Infinite loop | Recursion guard + entry condition in Flow |
+| Flow sets Field A → after trigger reacts to A | After-save Flow re-fires the trigger | Change detection so unchanged fields skip |
+| Both trigger and Flow create child records of the same type | Duplicate children | Single-owner rule per record type |
 
-### 8.3 Rules
+### 10.3 Coexistence rules
 
-- **Document ownership**: For each object, maintain a design doc that lists which automation (Trigger or Flow) owns which logic. Never have both doing the same thing without coordination.
-- **Use change detection in both**: A trigger guard does not help when a Flow sets a field and the trigger reacts to it — the trigger should check whether the field changed before processing.
-- **Never have both trigger and flow do DML on the same child records** without a coordination mechanism (e.g., a custom field flag that marks the record as already processed).
-- **Test combined behavior**: After deploying a new trigger, run tests in a sandbox that has the same active Flows as production.
+- **Document ownership.** Every object has a design doc listing which automation owns which behavior. Never two automations doing the same thing.
+- **Change detection in both.** A trigger's recursion guard doesn't help when a Flow legitimately updates a field — the trigger should still check whether the relevant field changed.
+- **Single owner per child-record type.** If the trigger creates Task records on Case insert, the Flow does not also create Tasks.
+- **Test against active Flows.** A trigger test in a sandbox without the production Flow active does not validate the real interaction.
+- **Plusgrade PlusGradeFullSB:** field normalization on Case lives in `Case_BS_Normalize_Case` (before-save Flow, triggerOrder 10). Do not duplicate that in a before trigger. See `CLAUDE.md` §3 for the full ownership table.
 
-### 8.4 Disabling Trigger Logic for Specific Flows
-
-For edge cases where a Flow must bypass trigger logic, use a custom bypass flag:
+### 10.4 Bypass flag
 
 ```apex
-// Custom metadata or field: Trigger_Bypass_Active__c (checkbox on Case)
-// Set this field in the Flow before performing DML, clear it after
+// Custom field Trigger_Bypass_Active__c (checkbox) or Trigger_Bypass__mdt rows
 public static void onAfterUpdate(List<Case> newList, Map<Id, Case> oldMap) {
-    List<Case> toProcess = new List<Case>();
-    for (Case c : newList) {
-        if (!c.Trigger_Bypass_Active__c) {
-            toProcess.add(c);
-        }
-    }
-    if (!toProcess.isEmpty()) {
-        CaseService.processUpdates(toProcess, oldMap);
-    }
+   List<Case> toProcess = new List<Case>();
+   for (Case c : newList) {
+      if (!c.Trigger_Bypass_Active__c) toProcess.add(c);
+   }
+   if (!toProcess.isEmpty()) CaseService.processUpdates(toProcess, oldMap);
 }
 ```
 
 ---
 
-## 9. Before vs After Decision Guide
+## 11. Delete / Undelete
 
-Use this table to determine which trigger context is appropriate for each type of logic.
-
-| Requirement | Correct Context | Reason |
-|---|---|---|
-| Set a default field value on the record being saved | before insert | Avoids extra DML; changes to Trigger.new are committed automatically |
-| Derive a field from other fields on the same record | before insert / before update | No DML required; applied before record is written to DB |
-| Validate and prevent a save with an error message | before insert / before update / before delete | `record.addError()` only works in before contexts |
-| Create related child records | after insert / after update | Parent record must have an ID (only available after insert) |
-| Update a related parent record | after insert / after update | Avoid circular updates; add change detection + recursion guard |
-| Send email notifications | after insert / after update | Send only after record is confirmed committed |
-| Publish a Platform Event | after insert / after update | Publish after committed state is known |
-| Make an HTTP callout | after insert / after update (via @future or Queueable) | Callouts not allowed directly in triggers; enqueue a Queueable |
-| Prevent deletion of a record | before delete | `record.addError()` in before delete blocks the DML |
-| Archive data after a deletion | after delete | Record is committed as deleted; safe to clean up references |
-| Restore related records on undelete | after undelete | Undeleted record has its ID restored; use it to restore children |
-
-### 9.1 Critical Rules
-
-- **Never perform DML in before contexts on the triggering record** — the record is not yet committed; your DML will create a second version or cause errors
-- **Never call addError() in after contexts** — it has no effect in after triggers
-- **Never make HTTP callouts directly in any trigger context** — enqueue a Queueable or use `@future(callout=true)`
-- **after insert for enqueueing async work** is the safest pattern: wait until the save is confirmed before dispatching async jobs
-
----
-
-## 10. Delete / Undelete Handling
-
-### 10.1 Before Delete — Validation and Prevention
-
-Use `addError()` to prevent deletion when business rules require it:
+### 11.1 `before delete` — validation
 
 ```apex
-/**
- * Description: Validates that active cases cannot be deleted.
- * @param oldList  Case records being deleted (Trigger.old)
- */
 public static void onBeforeDelete(List<Case> oldList) {
-    for (Case c : oldList) {
-        if (c.Status == 'Open' || c.Status == 'In Progress') {
-            c.addError(
-                'Active cases cannot be deleted. Close the case before deleting it.'
-            );
-        }
-    }
+   for (Case c : oldList) {
+      if (c.Status == 'Open' || c.Status == 'In Progress') {
+         c.addError('Active cases cannot be deleted. Close the case first.');
+      }
+   }
 }
 ```
 
-Key rules:
-- `Trigger.old` is the ONLY available collection in delete contexts — `Trigger.new` is null
-- `addError()` on any record in before delete will block the entire DML operation (or just that record in partial DML)
-- Throw custom exceptions for systemic errors; use `addError()` for user-facing validation messages
+`Trigger.old` is the only collection. `addError()` on a record blocks just that record in partial DML, the whole DML in all-or-none.
 
-### 10.2 After Delete — Cleanup
+### 11.2 `after delete` / `after undelete`
 
 ```apex
-/**
- * Description: Archives case-related data after case deletion.
- * @param oldList  Deleted Case records (Trigger.old)
- */
 public static void onAfterDelete(List<Case> oldList) {
-    Set<Id> deletedCaseIds = new Set<Id>();
-    for (Case c : oldList) {
-        deletedCaseIds.add(c.Id);
-    }
-    // Delegate cleanup to service layer
-    CaseService.archiveRelatedData(deletedCaseIds);
+   Set<Id> deletedIds = new Map<Id, Case>(oldList).keySet();
+   CaseService.archiveRelatedData(deletedIds);
 }
-```
 
-### 10.3 After Undelete — Restoration
-
-```apex
-/**
- * Description: Restores related records when a Case is undeleted from the Recycle Bin.
- * @param newList  Undeleted Case records (Trigger.new)
- */
 public static void onAfterUndelete(List<Case> newList) {
-    Set<Id> restoredCaseIds = new Set<Id>();
-    for (Case c : newList) {
-        restoredCaseIds.add(c.Id);
-    }
-    CaseService.restoreRelatedData(restoredCaseIds);
+   Set<Id> restoredIds = new Map<Id, Case>(newList).keySet();
+   CaseService.restoreRelatedData(restoredIds);
 }
 ```
 
-Key rules for undelete:
-- `Trigger.new` and `Trigger.newMap` are available; `Trigger.old` is NOT
-- Related records in the Recycle Bin may need to be individually undeleted — this requires a separate DML call or a `Database.undelete()` on the child records
-- Test undelete scenarios explicitly — they are frequently omitted from test coverage
+Undelete is frequently omitted from coverage. If the trigger declares `after undelete`, the test class MUST cover it — restored related records often need their own `Database.undelete()` call, which is a separate code path.
 
 ---
 
-## 11. Bulk Safety
+## 12. Bulkification — Non-Negotiable
 
-Every trigger, handler, and service method called from a trigger MUST be safe for 200 records. Salesforce guarantees it will batch up to 200 records per trigger invocation, and bulk DML operations from code (e.g., `insert caseList`) can produce single trigger invocations with large lists.
+Salesforce guarantees up to 200 records per trigger invocation. Every handler, service method, and helper must be safe at 200. Governor limits per transaction: 100 SOQL queries, 150 DML statements, 10,000 DML rows.
 
-### 11.1 Core Rules
-
-1. **Never SOQL inside a for loop** — collect IDs into a Set first; query once outside the loop
-2. **Never DML inside a for loop** — collect records into a List; DML once outside the loop
-3. **Use Map for O(1) lookup** — after querying, put results in a `Map<Id, SObject>` for fast access
-4. **Pass full collections to service methods** — never call a service method one record at a time
-5. **Governor Limit awareness**: 100 SOQL queries per transaction, 150 DML statements, 10,000 DML rows — bulk patterns are mandatory, not optional
-
-### 11.2 Anti-Pattern vs Correct Pattern
-
-**WRONG — SOQL and DML inside loop:**
 ```apex
-// NEVER DO THIS
+// WRONG — SOQL and DML inside the loop
 for (Case c : newList) {
-    Account acc = [SELECT Id, Name FROM Account WHERE Id = :c.AccountId]; // SOQL in loop
-    c.Description = acc.Name;
-    update c; // DML in loop
+   Account a = [SELECT Name FROM Account WHERE Id = :c.AccountId];   // SOQL in loop
+   c.Description = a.Name;
+   update c;                                                          // DML in loop
 }
 ```
 
-**CORRECT — Bulk-safe pattern:**
 ```apex
-// Collect all Account IDs
+// RIGHT — collect, query once, build map, process in memory
 Set<Id> accountIds = new Set<Id>();
 for (Case c : newList) {
-    if (c.AccountId != null) {
-        accountIds.add(c.AccountId);
-    }
+   if (c.AccountId != null) accountIds.add(c.AccountId);
 }
 
-// Single SOQL outside the loop
-Map<Id, Account> accountMap = new Map<Id, Account>(
-    [SELECT Id, Name FROM Account WHERE Id IN :accountIds WITH USER_MODE]
+Map<Id, Account> accountsById = new Map<Id, Account>(
+   [SELECT Id, Name FROM Account WHERE Id IN :accountIds WITH USER_MODE]
 );
 
-// Process in-memory — no DML inside loop
-List<Case> casesToUpdate = new List<Case>();
 for (Case c : newList) {
-    Account acc = accountMap.get(c.AccountId);
-    if (acc != null) {
-        c.Description = acc.Name; // Before context: modify in place
-    }
+   Account a = accountsById.get(c.AccountId);
+   if (a != null) c.Description = a.Name;       // before context — auto-committed
 }
-// After context: collect modified records and DML once
-// (In before context: changes to Trigger.new are auto-committed)
 ```
 
-### 11.3 Map Pattern for Related Record Lookup
+### Patterns to internalize
+
+| Pattern | Why |
+|---|---|
+| `Set<Id>` of parent Ids → one SOQL → `Map<Id, SObject>` | O(1) per-record access, one query total |
+| `Map<Id, List<SObject>>` to group children by parent | Group once, iterate in O(n) |
+| Relationship subqueries when parent + child both needed | One SOQL replaces two |
+| `AggregateResult` + `GROUP BY` for counts/sums | Replaces query + Apex loop count |
+| Only DML records that actually changed | Compare to `oldMap` before adding to update list |
+| `Limits.getQueries()` / `getDmlStatements()` mid-handler | Sanity check before you ship |
+
+### USER_MODE everywhere
 
 ```apex
-// After insert: create related Task records for each new Case
-public static void onAfterInsert(List<Case> newList) {
-    List<Task> tasksToCreate = new List<Task>();
-    for (Case c : newList) {
-        tasksToCreate.add(new Task(
-            Subject    = 'Follow up: ' + c.Subject,
-            WhatId     = c.Id,
-            Status     = 'Not Started',
-            ActivityDate = Date.today().addDays(3)
-        ));
-    }
-    if (!tasksToCreate.isEmpty()) {
-        // Single DML for all 200 records
-        Database.insert(tasksToCreate, false);
-    }
-}
+List<Case> cases = [SELECT Id, Status FROM Case WHERE AccountId IN :accountIds WITH USER_MODE];
+Database.update(cases, AccessLevel.USER_MODE);
 ```
+
+`WITH USER_MODE` (replaces older `WITH SECURITY_ENFORCED`) enforces CRUD + FLS for the running user. Use it unless the entry point is an explicitly `without sharing` service with a Custom Permission gate.
 
 ---
 
-## 12. Testing 200 Records
+## 13. Testing — 200 Records Or It Didn't Happen
 
-The 200-record bulk test is NON-NEGOTIABLE for every trigger scenario. Testing with a single record does not validate bulk safety. Every relevant context (insert, update, delete) must have a 200-record test.
-
-### 12.1 Standard Bulk Insert Test
+Every trigger context that runs in production needs a 200-record test. Single-record tests don't validate bulkification.
 
 ```apex
 @isTest
-static void testBulkInsert_200Records() {
-    // Arrange
-    Account acc = new Account(Name = 'Bulk Test Account');
-    insert acc;
-
-    List<Case> cases = new List<Case>();
-    for (Integer i = 0; i < 200; i++) {
-        cases.add(new Case(
-            Subject   = 'Test Case ' + i,
-            Status    = 'New',
-            Priority  = 'Medium',
-            AccountId = acc.Id
-        ));
-    }
-
-    // Act
-    Test.startTest();
-    insert cases;
-    Test.stopTest();
-
-    // Assert
-    List<Case> insertedCases = [SELECT Id, Subject, Status FROM Case WHERE AccountId = :acc.Id];
-    System.assertEquals(200, insertedCases.size(),
-        'Expected 200 cases to be inserted successfully');
-
-    // Validate trigger logic was applied (e.g., default field set)
-    for (Case c : insertedCases) {
-        System.assertNotEquals(null, c.Status, 'Status should be set on all records');
-    }
+static void testBulkInsert_200() {
+   List<Case> cases = new List<Case>();
+   for (Integer i = 0; i < 200; i++) {
+      cases.add(new Case(Subject = 'T' + i, Status = 'New'));
+   }
+   Test.startTest();
+   insert cases;
+   Test.stopTest();
+   System.assertEquals(200, [SELECT COUNT() FROM Case WHERE Subject LIKE 'T%']);
 }
-```
 
-### 12.2 Standard Bulk Update Test
-
-```apex
 @isTest
-static void testBulkUpdate_statusChange_200Records() {
-    // Arrange — create records first
-    Account acc = new Account(Name = 'Bulk Update Test Account');
-    insert acc;
+static void testBulkUpdate_changeDetection_200() {
+   List<Case> cases = new List<Case>();
+   for (Integer i = 0; i < 200; i++) cases.add(new Case(Subject='C'+i, Priority='Medium', Status='New'));
+   insert cases;
 
-    List<Case> cases = new List<Case>();
-    for (Integer i = 0; i < 200; i++) {
-        cases.add(new Case(
-            Subject   = 'Update Test ' + i,
-            Status    = 'New',
-            AccountId = acc.Id
-        ));
-    }
-    insert cases;
-
-    // Act — bulk update all to 'In Progress'
-    for (Case c : cases) {
-        c.Status = 'In Progress';
-    }
-
-    Test.startTest();
-    update cases;
-    Test.stopTest();
-
-    // Assert
-    List<Case> updatedCases = [SELECT Id, Status FROM Case WHERE AccountId = :acc.Id];
-    System.assertEquals(200, updatedCases.size(), 'Expected 200 records after update');
-    for (Case c : updatedCases) {
-        System.assertEquals('In Progress', c.Status,
-            'All 200 cases should have status In Progress');
-    }
+   for (Integer i = 0; i < 100; i++) cases[i].Priority = 'Critical';   // only half change
+   Test.startTest();
+   update cases;
+   Test.stopTest();
+   System.assertEquals(100, [SELECT COUNT() FROM Case_Escalation__c],
+      'Only changed records should escalate');
 }
-```
 
-### 12.3 Bulk Delete Test
-
-```apex
-@isTest
-static void testBulkDelete_200Records() {
-    // Arrange
-    Account acc = new Account(Name = 'Delete Test Account');
-    insert acc;
-
-    List<Case> cases = new List<Case>();
-    for (Integer i = 0; i < 200; i++) {
-        cases.add(new Case(
-            Subject   = 'Delete Test ' + i,
-            Status    = 'Closed',  // Only closed cases can be deleted per our validation rule
-            AccountId = acc.Id
-        ));
-    }
-    insert cases;
-
-    // Act
-    Test.startTest();
-    delete cases;
-    Test.stopTest();
-
-    // Assert
-    List<Case> remaining = [SELECT Id FROM Case WHERE AccountId = :acc.Id];
-    System.assertEquals(0, remaining.size(), 'All 200 cases should be deleted');
-}
-```
-
-### 12.4 Recursion Guard Test
-
-```apex
 @isTest
 static void testRecursionGuard_noInfiniteLoop() {
-    Account acc = new Account(Name = 'Recursion Test Account');
-    insert acc;
-
-    Case c = new Case(Subject = 'Recursion Test', Status = 'New', AccountId = acc.Id);
-    insert c;
-
-    // Act — trigger update that would cause re-entry without guard
-    c.Status = 'In Progress';
-    c.Priority = 'High';
-
-    Test.startTest();
-    Boolean exceptionThrown = false;
-    try {
-        update c;
-    } catch (Exception ex) {
-        exceptionThrown = true;
-    }
-    Test.stopTest();
-
-    System.assertFalse(exceptionThrown, 'No exception expected — recursion guard should prevent infinite loop');
-    Case updated = [SELECT Id, Status FROM Case WHERE Id = :c.Id];
-    System.assertEquals('In Progress', updated.Status, 'Status should be updated to In Progress');
+   Case c = new Case(Subject = 'R', Status = 'New');
+   insert c;
+   Test.startTest();
+   c.Status = 'In Progress';
+   update c;
+   Test.stopTest();
+   System.assert(Limits.getQueries() < 50, 'Recursion guard limited SOQL');
 }
+```
+
+For Plusgrade PlusGradeFullSB: **test classes are deferred until after sandbox functional testing** (see `CLAUDE.md` §3). Still write them — just don't gate the deploy on them.
+
+---
+
+## 14. Definition of Done
+
+- [ ] Exactly one trigger exists for the object (confirmed via retrieve + audit query).
+- [ ] Trigger body is a single dispatch call. No `if`, no SOQL, no DML, no `for`.
+- [ ] Handler uses `switch on Trigger.operationType` **or** `new MetadataTriggerHandler().run()` (TAF).
+- [ ] Recursion guard chosen and justified (boolean, `Set<Id>`, or field-value comparison).
+- [ ] Static guard wrapped in `try { ... } finally { isRunning = false; }`.
+- [ ] All declared contexts have handler branches; undeclared contexts removed from signature.
+- [ ] Every `after update` filters by change detection — only changed records reach the service.
+- [ ] All SOQL outside loops. All DML outside loops. `WITH USER_MODE` / `AccessLevel.USER_MODE`.
+- [ ] Sharing keyword declared on handler + service. `with sharing` by default; `without sharing` only with Custom Permission gate.
+- [ ] No hardcoded record Type Ids — use `Schema.SObjectType.<Sobj>.getRecordTypeInfosByDeveloperName()`.
+- [ ] No HTTP callouts in trigger — enqueued via Queueable (`Database.AllowsCallouts`).
+- [ ] No `@future` methods — project prohibits them. Use Queueable + `System.Finalizer`.
+- [ ] Test class: bulk-200 per context + recursion + negative + change-detection scenarios.
+- [ ] Check-only deploy passes with `--test-level RunLocalTests`.
+- [ ] For Plusgrade: new flows deploy `status = Draft`; no manual deactivation of old triggers.
+
+---
+
+## 15. Naming
+
+| Artifact | Pattern | Example |
+|---|---|---|
+| Trigger file | `{SObject}Trigger` | `CaseTrigger.trigger` |
+| Custom handler | `{SObject}TriggerHandler` | `CaseTriggerHandler.cls` |
+| TAF action | `TA_{SObject}_{Concern}` | `TA_Case_SetDefaults.cls` |
+| Service | `{SObject}Service` | `CaseService.cls` |
+| Selector | `{SObject}Selector` | `CaseSelector.cls` |
+| Domain | `{SObject}Domain` | `CaseDomain.cls` |
+| Test class | `{Service}Test` / `{Handler}Test` | `CaseServiceTest.cls` |
+
+Class names PascalCase. Methods camelCase, verb-first (`onBeforeInsert`, `handleEscalation`). Maps `{value}By{key}` (`accountsById`). Sets `{noun}Ids` (`escalatedCaseIds`).
+
+---
+
+## 16. Validation Commands
+
+```bash
+# Audit existing triggers
+sf data query \
+   --query "SELECT Name, TableEnumOrId, Status FROM ApexTrigger ORDER BY TableEnumOrId" \
+   --target-org PlusGradeFullSB --result-format human
+
+# Retrieve current trigger + handler before modifying
+sf project retrieve start \
+   --metadata "ApexTrigger:CaseTrigger,ApexClass:CaseTriggerHandler" \
+   --target-org PlusGradeFullSB
+
+# Check-only deploy
+sf project deploy start \
+   --manifest manifest/package-case-flow-optimization.xml \
+   --target-org PlusGradeFullSB \
+   --dry-run --test-level RunLocalTests --wait 60
+
+# Run a specific test class
+sf apex run test \
+   --class-names CaseServiceTest \
+   --target-org PlusGradeFullSB \
+   --result-format human --wait 10
 ```
 
 ---
 
-## 13. Common AI Mistakes to Avoid
+## 17. Common AI Mistakes to Avoid
 
-These patterns are frequently generated by AI tools. Every one of them MUST be caught in code review. Reject any AI output that contains these patterns and request a corrected version.
-
-| # | Mistake | Correct Approach |
+| # | Mistake | Correct approach |
 |---|---|---|
 | 1 | Writing business logic (if/else, field assignments, SOQL) directly inside the trigger file | Trigger file must contain ONLY the handler dispatch call; all logic lives in service class |
 | 2 | Creating a second trigger for the same object | Retrieve the existing trigger; extend the existing handler — never create a second trigger |
@@ -910,85 +649,29 @@ These patterns are frequently generated by AI tools. Every one of them MUST be c
 
 ---
 
-## 14. Definition of Done
+## 18. Empirical Findings & Implementation Notes
 
-Before marking any trigger task complete, verify every item on this checklist:
+When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
 
-- [ ] Confirmed there is only ONE trigger for the object (ran retrieve command to check existing triggers)
-- [ ] Trigger file is thin — contains only the handler dispatch call (`CaseTriggerHandler.run(...)`)
-- [ ] Handler class has a recursion guard (`private static Boolean isRunning = false`) with `finally` block reset
-- [ ] Handler uses `switch on Trigger.operationType` for context routing
-- [ ] Service class handles all business logic; no logic in trigger or handler beyond routing
-- [ ] Change detection is applied in all update contexts — only changed records are processed
-- [ ] All relevant contexts are handled; excluded contexts have a comment explaining why
-- [ ] No SOQL inside any for loop in the trigger stack
-- [ ] No DML inside any for loop in the trigger stack
-- [ ] Developer documentation header on handler class and service class
-- [ ] `with sharing`, `without sharing`, or `inherited sharing` declared on handler and service classes
-- [ ] Test class covers: 200-record bulk insert, 200-record bulk update, negative/validation path, recursion guard
-- [ ] Test class covers delete context if delete is handled in the trigger
-- [ ] Test class covers undelete context if undelete is handled in the trigger
-- [ ] Check-only deployment passes with `RunLocalTests`
+| # | Date | Documented approach | What actually works | Why / Context |
+|---|---|---|---|---|
 
 ---
 
-## 15. Validation Commands
+## 19. Official References
 
-```bash
-# STEP 1: Always retrieve existing triggers for the object first
-sf project retrieve start \
-  --metadata "ApexTrigger:CaseTrigger" \
-  --target-org <alias>
-
-# STEP 2: Also retrieve the handler class if it exists
-sf project retrieve start \
-  --metadata "ApexClass:CaseTriggerHandler" \
-  --target-org <alias>
-
-# STEP 3: Audit all triggers in the org
-sf data query \
-  --query "SELECT Name, TableEnumOrId, Status FROM ApexTrigger ORDER BY TableEnumOrId" \
-  --target-org <alias> \
-  --result-format human
-
-# STEP 4: Check-only deployment with all local tests
-sf project deploy start \
-  --manifest manifest/package.xml \
-  --target-org <alias> \
-  --check-only \
-  --test-level RunLocalTests \
-  --wait 60
-
-# STEP 5: Run the specific trigger test class
-sf apex run test \
-  --class-names CaseServiceTest \
-  --target-org <alias> \
-  --result-format human \
-  --wait 10
-
-# STEP 6: Verify code coverage after run
-sf apex get test \
-  --test-run-id <jobId> \
-  --target-org <alias> \
-  --result-format human
-
-# STEP 7: Full deploy (after check-only passes)
-sf project deploy start \
-  --manifest manifest/package.xml \
-  --target-org <alias> \
-  --test-level RunLocalTests \
-  --wait 60
-```
+- [Apex Triggers — Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers.htm)
+- [Apex Trigger Best Practices](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_bp.htm)
+- [Bulk Trigger Idioms](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_bulk_idioms.htm)
+- [Trigger Context Variables](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_context_variables.htm)
+- [Order of Execution (Triggers + Flows)](https://help.salesforce.com/s/articleView?id=sf.flow_concepts_trigger_order_of_execution.htm)
+- [Apex Governor Limits](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm)
+- [Apex Security and Sharing](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_security_sharing_understand.htm)
+- [Queueable Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_queueing_jobs.htm)
+- [Mitch Spano — Apex Trigger Actions Framework](https://github.com/mitchspano/apex-trigger-actions-framework)
+- [`forcedotcom/sf-skills` generating-apex](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-apex)
+- [`trailheadapps/agent-script-recipes` APEX_RULES](https://github.com/trailheadapps/agent-script-recipes/blob/main/.airules/APEX_RULES.md)
 
 ---
 
-## 16. Official References
-
-- Apex Triggers Developer Guide: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers.htm
-- Apex Triggers — Bulk Idioms: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_bulk_idioms.htm
-- Order of Execution (Triggers and Flows): https://help.salesforce.com/s/articleView?id=sf.flow_concepts_trigger_order_of_execution.htm
-- Apex Trigger Context Variables: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_triggers_context_variables.htm
-- Apex Testing: https://trailhead.salesforce.com/content/learn/modules/apex_triggers
-- Apex Governor Limits: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_gov_limits.htm
-- Apex Security and Sharing: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_security_sharing_understand.htm
-- Queueable Apex: https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_queueing_jobs.htm
+*Apex Trigger Guidelines | v3.0 | Last verified 2026-05-16*

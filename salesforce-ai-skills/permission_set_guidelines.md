@@ -1,712 +1,581 @@
 # Permission Set & Access Control Guidelines
 
-**Version**: 2.0 (April 2026)
-**Developer**: Naresh | Senior Salesforce Developer
-**Purpose**: Standalone guidelines for Salesforce access control using Permission Sets, Permission Set Groups, and Custom Permissions. Attach when designing, creating, or reviewing access control metadata.
+Authoritative grammar for `PermissionSet`, `PermissionSetGroup`, `MutingPermissionSet`, and `CustomPermission` metadata in this project. Other skill files reference this one for any access-control concern.
+
+**Verified against:** [PermissionSet Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_permissionset.htm) · [Permission Set Groups Help](https://help.salesforce.com/s/articleView?id=sf.perm_sets_groups_overview.htm) · [Muting Permission Sets Help](https://help.salesforce.com/s/articleView?id=sf.perm_set_groups_muting.htm) · [Custom Permissions Help](https://help.salesforce.com/s/articleView?id=sf.custom_perms_overview.htm) · [forcedotcom/sf-skills `generating-permission-set`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-permission-set). Last verified 2026-05-16.
+
+> **Salesforce roadmap reminder:** profiles will continue to shrink. Treat profiles as identity defaults (login hours, IP ranges, default record type). All permissions belong in Permission Sets. Build for the perm-set-only future today.
 
 ---
 
-## Table of Contents
+## 1. File Layout
 
-1. [Required Agent Output Contract](#1-required-agent-output-contract)
-2. [Permission Sets vs Profiles](#2-permission-sets-vs-profiles)
-3. [Permission Set Naming](#3-permission-set-naming)
-4. [Permission Set Groups (PSG)](#4-permission-set-groups-psg)
-5. [Muting Permission Sets](#5-muting-permission-sets)
-6. [Custom Permissions](#6-custom-permissions)
-7. [Object Permissions](#7-object-permissions)
-8. [Field Permissions](#8-field-permissions)
-9. [Apex Class Access](#9-apex-class-access)
-10. [Flow Access](#10-flow-access)
-11. [Tab / App Access](#11-tab--app-access)
-12. [Least Privilege Principle](#12-least-privilege-principle)
-13. [Avoiding Profile Changes](#13-avoiding-profile-changes)
-14. [Packaging / Deployment](#14-packaging--deployment)
-15. [Complete Example](#15-complete-example)
-16. [Common AI Mistakes to Avoid](#16-common-ai-mistakes-to-avoid)
-17. [Definition of Done](#17-definition-of-done)
-18. [Validation Commands](#18-validation-commands)
-19. [Official References](#19-official-references)
+```
+force-app/main/default/
+   permissionSets/<DevName>.permissionSet-meta.xml
+   permissionSetGroups/<DevName>.permissionSetGroup-meta.xml
+   mutingPermissionSets/<DevName>.mutingPermissionSet-meta.xml
+   customPermissions/<DevName>.customPermission-meta.xml
+```
+
+`<DevName>` (DeveloperName / API name) is permanent after first deploy. Rename = delete + recreate = lost assignments. Choose stable names before the first deploy.
 
 ---
 
-## 1. Required Agent Output Contract
-
-When generating, modifying, or reviewing any Permission Set or access control metadata, the AI agent MUST produce the following as part of its output:
-
-### 1.1 Permissions Created / Modified
-
-List every permission set, permission set group, muting permission set, or custom permission being created or changed. Format:
+## 2. Permission Sets vs Profiles — The Layering Model
 
 ```
-- PS_SupportAgent (new): Object permissions for Case, Contact; Apex class CaseDashboardController
-- PS_ReadOnly (existing, modified): Adding Field Read on Case.Description__c
-- Custom Permission: BypassCaseValidation (new)
+Profile (baseline / identity — login hours, IP ranges, default RT, password policy)
+   +
+Permission Sets (capability layers — Object/Field/Apex/Flow/Tab/App/CustomPerm)
+   +
+Permission Set Group (role bundle = N component PS − Muting PS)
 ```
-
-### 1.2 Security Justification
-
-For every permission grant, provide a one-line business justification. Example:
-
-```
-- Case: Create/Read/Edit — Support agents must log and update cases throughout their lifecycle.
-- Contact: Read — Agents need to see account contact information when resolving cases.
-- Delete Case: NOT GRANTED — Deletion is reserved for System Administrators only.
-```
-
-### 1.3 Least-Privilege Check
-
-Explicitly confirm:
-- [ ] No Modify All granted unless explicitly required and justified
-- [ ] No View All granted unless explicitly required and justified
-- [ ] Delete not granted unless the role requires destruction of records
-- [ ] No System Administrator-equivalent permissions embedded in user-facing PS
-
-### 1.4 Test Plan
-
-Describe how the permission set will be tested:
-- Assign to test user in sandbox
-- Verify each granted permission is accessible in UI
-- Verify non-granted permissions are inaccessible
-- Run Apex tests under test user profile (use `System.runAs`)
-
-### 1.5 Deployment Order
-
-State the correct deployment sequence:
-```
-1. Custom Objects and Fields (if new)
-2. Custom Permissions
-3. Apex Classes
-4. Flows
-5. Permission Sets (component PS first)
-6. Permission Set Groups (after all component PS exist)
-7. Muting Permission Sets (after PSG exists)
-```
-
----
-
-## 2. Permission Sets vs Profiles
-
-### Core Rule
-
-**ALWAYS prefer Permission Sets over Profiles for granting permissions.**
-
-Profiles define the minimum baseline:
-- Login hours
-- Login IP ranges
-- Default record type assignments
-- Password policy (where applicable)
-- Page layout assignments (being replaced by Dynamic Forms)
-
-Everything else belongs in Permission Sets.
-
-### Rationale Table
 
 | Concern | Profile | Permission Set |
 |---|---|---|
-| Maintainability | Hard — one profile per user type, grows unmanageable | Easy — compose PS like building blocks |
-| Reusability | None — permissions locked to one profile | High — one PS can be added to any profile/user |
-| Auditability | Hard to see what a profile grants | Each PS has clear, documented scope |
-| Least Privilege | Hard — profiles tend to accumulate permissions | Easy — grant only what the PS is designed for |
-| Deployment | Profile metadata is large, merge-conflict-prone | Smaller, focused metadata files |
-| Future-proofing | Salesforce moving away from profiles | PS and PSG are the Salesforce-recommended path |
+| Login hours, IP ranges, password policy | YES (only place) | NO |
+| Default record type | YES (legacy) | Roadmap → PS |
+| Object/Field/Apex/Flow/Tab/App/CustomPerm | NO | YES — always |
+| Reusable, composable, low-conflict deploys | NO | YES |
 
-### Rules
-
-- **NEVER add object, field, Apex, or Flow permissions to a Profile if they can be moved to a Permission Set.**
-- If a permission is currently in a Profile and it can be extracted, plan migration to PS.
-- Profiles may retain: default record type assignments, page layouts (legacy), login hours/IP ranges.
-- When Salesforce completes profile deprecation, permissions will only be in Permission Sets. Design accordingly today.
+**The rule:** if you are about to edit a Profile XML for anything other than login hours, IP ranges, or default record type, **STOP** and move it to a Permission Set.
 
 ---
 
-## 3. Permission Set Naming
+## 3. Naming Conventions
 
-### Convention
+| Metadata | Prefix | Example | Notes |
+|---|---|---|---|
+| Permission Set | `PS_` | `PS_SupportAgent`, `PS_Object_RW_Case`, `PS_Apex_CaseDashboard` | PascalCase domain/role |
+| Permission Set Group | `PSG_` | `PSG_SupportAgent`, `PSG_FinanceReadOnly` | One PSG per business role |
+| Muting Permission Set | `MPS_` | `MPS_SupportAgent_NoDelete` | Pattern: `MPS_<PSG>_<Intent>` |
+| Custom Permission | none, PascalCase | `BypassCaseValidation`, `ViewInternalNotes` | Verb-style intent name |
 
+**Naming hard rules**
+- API names (`fullName`) are permanent. Never use `PS_Temp`, `PS_New`, `PS_V2`.
+- No spaces, no hyphens. PascalCase only for the domain portion.
+- One Permission Set, one purpose. If you cannot describe the PS in a single sentence, split it.
+
+---
+
+## 4. `PermissionSet` XML Reference
+
+### 4.1 Top-level elements
+
+| Element | Type | Required | Purpose |
+|---|---|---|---|
+| `label` | string | YES | UI display name |
+| `description` | string | strongly recommended | Owner, purpose, last review date |
+| `license` | string | optional | `Salesforce`, `Salesforce Platform`, `AnalyticsCloudIntegrationUser`, etc. Omit unless required — license-scoped PS cannot be assigned to users on a different license |
+| `hasActivationRequired` | boolean | optional | `true` = session-activated PS (user must activate to use) |
+
+### 4.2 `<applicationVisibilities>` — Lightning Apps
+
+```xml
+<applicationVisibilities>
+   <application>standard__ServiceConsole</application>
+   <default>false</default>
+   <visible>true</visible>
+</applicationVisibilities>
 ```
-PS_<DomainOrRole>
+
+- `application` — app API name. Standard apps use `standard__` prefix.
+- `default` — sets this app as the user's default (rarely true).
+- `visible` — gates App Launcher visibility.
+
+### 4.3 `<classAccesses>` — Apex Class Permission
+
+```xml
+<classAccesses>
+   <apexClass>CaseDashboardController</apexClass>
+   <enabled>true</enabled>
+</classAccesses>
 ```
 
-### Rules
+Required for `@AuraEnabled` (LWC/Aura), `@RestResource`, Visualforce controllers, Connected App callers. Not required for test classes, trigger handlers, or `@InvocableMethod` called from autolaunched Flows in system context.
 
-- `PS_` prefix is mandatory — identifies the metadata type at a glance.
-- `<DomainOrRole>` is PascalCase describing the functional role or access scope.
-- No spaces. No underscores within the domain portion (use PascalCase to separate words).
-- No temporary names like `PS_Temp`, `PS_Test`, `PS_New` — names must be stable for deployment.
-- The API name (DeveloperName) is permanent. Label can be more descriptive.
+**Planner permission-check trap (Agentforce):** when a planner action targets `apex://X`, the running user must have `classAccesses` for `X`. **A single missing class permission causes the entire planner action surface to silently degrade** — the agent hallucinates instead of calling the action. When an Agentforce agent's actions are flaky, check `classAccesses` on `<AgentName>_Access` PS first.
 
-### Examples
+### 4.4 `<flowAccesses>` — Flow Run Permission
 
-| API Name | Label | Purpose |
+```xml
+<flowAccesses>
+   <enabled>true</enabled>
+   <flow>Case_Escalation_Screen_Flow</flow>
+</flowAccesses>
+```
+
+Required for Screen Flows launched from buttons, quick actions, utility bars, App Pages, Experience pages. NOT required for Record-Triggered, Scheduled, or Autolaunched-from-Apex Flows. The Flow must be deployed (need not be Active) before the PS.
+
+### 4.5 `<objectPermissions>` — CRUD per Object
+
+```xml
+<objectPermissions>
+   <allowCreate>true</allowCreate>
+   <allowDelete>false</allowDelete>
+   <allowEdit>true</allowEdit>
+   <allowRead>true</allowRead>
+   <modifyAllRecords>false</modifyAllRecords>
+   <object>Case</object>
+   <viewAllRecords>false</viewAllRecords>
+</objectPermissions>
+```
+
+All six boolean children are **required** when the block is present. `viewAllRecords` / `modifyAllRecords` bypass sharing — admin only, require justification. Avoid `viewAllFields`; use explicit `<fieldPermissions>`.
+
+### 4.6 `<fieldPermissions>` — Field Level Security
+
+```xml
+<fieldPermissions>
+   <editable>true</editable>
+   <field>Case.Description</field>
+   <readable>true</readable>
+</fieldPermissions>
+```
+
+**Deployment-failing constraints**
+- **Required fields MUST NOT appear in `<fieldPermissions>`.** A field is required when its metadata has `<required>true</required>`. Granting FLS on required fields fails deployment with no remediation other than removing the entry.
+- **Master-detail fields are always required on the child** — omit them.
+- **Formula fields cannot be `editable: true`** — formulas are read-only by definition.
+- **Standard required fields** (`Account.Name`, `Contact.LastName`, `Case.Status`, etc.) — omit from FLS.
+- Use `Object.Field` format. For custom fields: `Object__c.Field__c`.
+- Setting `editable: true` implies `readable: true`. You still must declare both.
+
+### 4.7 `<recordTypeVisibilities>` — Record Type Access
+
+```xml
+<recordTypeVisibilities>
+   <recordType>Case.Internal_Support</recordType>
+   <visible>true</visible>
+   <default>false</default>
+</recordTypeVisibilities>
+```
+
+- Format: `Object.RecordTypeDeveloperName`.
+- `default` rarely belongs in a Permission Set — default record type usually stays on the Profile during the transition period.
+
+### 4.8 `<tabSettings>` — Tab Visibility
+
+```xml
+<tabSettings>
+   <tab>Case</tab>
+   <visibility>Available</visibility>
+</tabSettings>
+```
+
+**Tab naming rules (deployment-failing if wrong)**
+- **Custom object tabs:** include `__c` — `MyObject__c`
+- **Standard object tabs:** `standard-` prefix — `standard-Account`, `standard-Contact`, `standard-Report`
+- **Visualforce tabs:** the tab API name (no prefix)
+- **Web tabs / custom tabs:** the tab API name as defined
+
+| `<visibility>` value | Behavior |
+|---|---|
+| `Visible` | Tab is in the app navigation and on All Tabs. User can re-pin. |
+| `Available` | Tab is on All Tabs but not in the default app nav. User can add it. |
+| `Hidden` / `None` | Not visible anywhere |
+
+Note: older metadata used `DefaultOn` / `DefaultOff` / `Hidden`. Modern API uses `Visible` / `Available` / `None`. Both compile but stick to one form.
+
+### 4.9 `<userPermissions>` — System Permissions
+
+```xml
+<userPermissions>
+   <enabled>true</enabled>
+   <name>ApiEnabled</name>
+</userPermissions>
+```
+
+| Tier | Permissions | Notes |
 |---|---|---|
-| `PS_SupportAgent` | Support Agent Permissions | Core permissions for Level 1 support agents |
-| `PS_SupportAgentSenior` | Senior Support Agent Permissions | Additional delete/escalation permissions for senior agents |
-| `PS_ReadOnlyDashboard` | Read-Only Dashboard Access | Read-only access to reporting objects |
-| `PS_CaseViewer` | Case Viewer | Read access to Case and related objects |
-| `PS_IntegrationUser` | Integration User Permissions | API-only permissions for integration service account |
-| `PS_AdminUtility` | Admin Utility Access | Extended admin-adjacent permissions for power users |
-| `PS_FinanceRead` | Finance Object Read Access | Read-only access to finance-domain custom objects |
+| Safe | `ApiEnabled`, `RunReports`, `ManageReports`, `ViewSetup`, `ExportReport` | Grant as scope requires |
+| Elevated — require architect sign-off | `ViewAllData`, `ModifyAllData`, `ManageUsers`, `AuthorApex`, `CustomizeApplication`, `ManageRoles`, `ManageSharing`, `ViewEncryptedData` | Auto QA fail if granted in user-facing PS without justification |
+
+### 4.10 `<customPermissions>` — Grant a Custom Permission
+
+```xml
+<customPermissions>
+   <enabled>true</enabled>
+   <name>BypassCaseValidation</name>
+</customPermissions>
+```
+
+### 4.11 `<pageAccesses>` — Visualforce Pages
+
+```xml
+<pageAccesses>
+   <apexPage>CaseSnapshotPage</apexPage>
+   <enabled>true</enabled>
+</pageAccesses>
+```
+
+### 4.12 Other access blocks
+
+```xml
+<customMetadataTypeAccesses><enabled>true</enabled><name>FeatureFlag__mdt</name></customMetadataTypeAccesses>
+<customSettingAccesses><enabled>true</enabled><name>BypassSettings__c</name></customSettingAccesses>
+<externalDataSourceAccesses><enabled>true</enabled><externalDataSource>HubuREST</externalDataSource></externalDataSourceAccesses>
+```
+
+### 4.13 `<agentAccesses>` — Agentforce Employee Agent Access
+
+```xml
+<agentAccesses>
+   <agentName>Sales_Assistant_Agent</agentName>
+   <enabled>true</enabled>
+</agentAccesses>
+```
+
+- Required to let a user invoke an `AgentforceEmployeeAgent`.
+- `agentName` must exactly match the agent's `developer_name` (case-sensitive, see [agentforce-agent-script-reference.md](agentforce-agent-script-reference.md) §5).
+- Service Agents (`AgentforceServiceAgent`) use a different access path — the system PS `AgentforceServiceAgentUser` plus channel routing. See §6 below.
 
 ---
 
-## 4. Permission Set Groups (PSG)
+## 5. Permission Set Groups (PSG)
 
-### Purpose
+### 5.1 What a PSG is
 
-A Permission Set Group (PSG) bundles multiple Permission Sets into a single assignable unit. Assign the PSG to users instead of individual Permission Sets. This simplifies user management and makes the access model readable.
+A PSG bundles N component PS into one assignable unit. Effective permissions = union(component PS) − muting PS. Salesforce caches the result and recalculates on status change. Assign the PSG to users; never assign components directly when a PSG exists for that role.
 
-### Naming Convention
-
-```
-PSG_<DomainOrRole>
-```
-
-### Rules
-
-- `PSG_` prefix is mandatory.
-- PascalCase for the domain/role portion.
-- A PSG must have documentation listing its component Permission Sets.
-- Never assign individual component PS directly to users if a PSG exists for that role — use the PSG.
-
-### Example: Support Agent Role
-
-```
-PSG_SupportAgent
-  ├── PS_SupportAgent         (core case management permissions)
-  ├── PS_ReadOnly             (read access to reference data)
-  └── PS_CaseViewer           (case queue and list view access)
-```
-
-### Example XML Structure
+### 5.2 XML
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <PermissionSetGroup xmlns="http://soap.sforce.com/2006/04/metadata">
-    <description>Permission Set Group for Level 1 Support Agents. Composes core support, read-only, and case viewer permissions.</description>
-    <label>Support Agent Group</label>
-    <mutingPermissionSets>
-        <!-- Add muting PS name here if needed -->
-    </mutingPermissionSets>
-    <permissionSets>
-        <permissionSet>PS_SupportAgent</permissionSet>
-        <permissionSet>PS_ReadOnly</permissionSet>
-        <permissionSet>PS_CaseViewer</permissionSet>
-    </permissionSets>
-    <status>Updated</status>
+   <label>Support Agent Group</label>
+   <description>Level 1 support — composes core Case CRUD, read-only reference data, and queue access.</description>
+   <permissionSets>
+      <permissionSet>PS_Object_RW_Case</permissionSet>
+      <permissionSet>PS_Apex_CaseDashboard</permissionSet>
+      <permissionSet>PS_Tabs_ServiceConsole</permissionSet>
+   </permissionSets>
+   <mutingPermissionSets>
+      <mutingPermissionSet>MPS_SupportAgent_NoDelete</mutingPermissionSet>
+   </mutingPermissionSets>
+   <status>Updated</status>
 </PermissionSetGroup>
 ```
 
-### File Location
+**`<status>` values**
+| Value | Meaning |
+|---|---|
+| `Updated` | Recalculation pending — Salesforce will recompute on next assignment / query |
+| `Updating` | Recalculation in progress |
+| `Outdated` | Component PS changed since last calculation |
+| `Failed` | Recalculation failed — investigate |
 
-```
-force-app/main/default/permissionSetGroups/PSG_SupportAgent.permissionSetGroup-meta.xml
-```
+Almost always deploy with `<status>Updated</status>`. Salesforce schedules the actual recalc.
+
+### 5.3 PSG vs bare PS
+
+| Use PSG when | Use bare PS when |
+|---|---|
+| Multiple PS compose a real business role | Single tightly-scoped capability |
+| You want one assignment per user | Component is shared ad-hoc across roles |
+| Muting is needed | No subtraction logic |
+
+Every named business role (Support Agent, Finance Reader, Sales Manager) gets exactly one PSG.
+
+### 5.4 Lifecycle traps
+
+- Cannot delete a component PS while it's referenced by a PSG. Remove from PSG, deploy, then delete.
+- Component PS changes don't apply until the PSG recalculates. If status is `Outdated`, touch the PSG.
+- Adding a `MutingPermissionSet` requires re-deploying the PSG to link it — deploying the MPS alone is not enough.
 
 ---
 
-## 5. Muting Permission Sets
+## 6. Muting Permission Sets
 
-### Purpose
+### 6.1 What muting is
 
-A Muting Permission Set is used **within a Permission Set Group** to remove (mute) specific permissions that would otherwise be granted by one of the component Permission Sets. This allows fine-grained control without modifying the source Permission Set.
+A `MutingPermissionSet` subtracts permissions from the calculated PSG total. It can ONLY be referenced from inside a PSG — never assigned to users directly, never used outside a group.
 
-### Key Rules
-
-- Muting PS can only be used inside a PSG — they cannot be assigned directly to users.
-- Use muting to resolve conflicts where two component PS grant overlapping permissions and you need to revoke one.
-- Name muting PS with a `MPS_` prefix for clarity.
-
-### Naming Convention
-
-```
-MPS_<PSGName>_<Intent>
-```
-
-Example: `MPS_SupportAgent_NoCaseDelete`
-
-### Use Case Example
-
-Scenario: `PS_SupportAgent` grants Case: Read, Create, Edit, Delete. But the PSG `PSG_SupportAgentReadOnly` should only grant Read. Create a muting PS to remove Create, Edit, Delete.
+### 6.2 XML
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <MutingPermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
-    <description>Mutes Case create, edit, delete for the read-only support agent group.</description>
-    <label>Mute Case Write for Read-Only Group</label>
-    <objectPermissions>
-        <allowCreate>false</allowCreate>
-        <allowDelete>false</allowDelete>
-        <allowEdit>false</allowEdit>
-        <allowRead>false</allowRead>
-        <modifyAllRecords>false</modifyAllRecords>
-        <object>Case</object>
-        <viewAllRecords>false</viewAllRecords>
-    </objectPermissions>
+   <label>Mute Case Delete for Read-Only Group</label>
+   <description>Removes Case.Delete for the read-only variant of the support agent group.</description>
+   <objectPermissions>
+      <allowCreate>false</allowCreate>
+      <allowDelete>true</allowDelete>           <!-- TRUE here means "mute this permission" -->
+      <allowEdit>false</allowEdit>
+      <allowRead>false</allowRead>
+      <modifyAllRecords>false</modifyAllRecords>
+      <object>Case</object>
+      <viewAllRecords>false</viewAllRecords>
+   </objectPermissions>
+   <userPermissions>
+      <enabled>true</enabled>                    <!-- "enabled: true" in MPS = "mute this permission" -->
+      <name>ViewAllData</name>
+   </userPermissions>
 </MutingPermissionSet>
 ```
 
-Then reference it in the PSG:
+**Inverted semantics:** in a Muting PS, `true` / `enabled=true` means **"remove this permission from the group's calculated total"**, not "grant it". This is the single biggest mistake AI agents make with muting.
 
-```xml
-<mutingPermissionSets>
-    <mutingPermissionSet>MPS_SupportAgent_NoCaseDelete</mutingPermissionSet>
-</mutingPermissionSets>
-```
+### 6.3 Supported elements
+
+`MutingPermissionSet` supports the subtractable children of `PermissionSet`: `objectPermissions`, `fieldPermissions`, `userPermissions`, `classAccesses`, `pageAccesses`, `customPermissions`, `applicationVisibilities`, `tabSettings`, `recordTypeVisibilities`. No `license` (PSG inherits from components).
+
+### 6.4 When to use muting
+
+Use muting only when (1) a component PS is shared across multiple PSGs and (2) one specific PSG must NOT receive a permission the component grants. Otherwise just don't include the permission in the component — don't grant-then-mute.
 
 ---
 
-## 6. Custom Permissions
+## 7. Custom Permissions — The Bypass / Feature-Gate Mechanism
 
-### Purpose
+### 7.1 Use cases
 
-Custom Permissions are used for:
-1. **Feature gating** — enable/disable a feature for a subset of users without code changes.
-2. **Bypass logic** — allow trusted users to bypass validation rules, flows, or triggers.
-3. **Conditional UI** — show/hide components based on user's permissions.
+| Use | Pattern |
+|---|---|
+| Bypass a validation rule | `AND(<rule>, NOT($Permission.BypassCaseValidation))` |
+| Bypass a Flow gate | Decision condition: `$Permission.BypassFlow == True` |
+| Bypass `without sharing` enforcement in Apex | `if (!FeatureManagement.checkPermission('AllowUnsharedQuery')) { ... }` |
+| Feature gate UI | LWC `@wire` against `@salesforce/customPermission/MyPerm` |
 
-### Core Rules
-
-- **NEVER hardcode profile names in bypass logic.** Profiles change, are renamed, and the pattern is fragile.
-- **ALWAYS use Custom Permissions** for bypass logic in validation rules and flows.
-- Custom Permissions are granted via Permission Sets, not profiles.
-- Name Custom Permissions descriptively in PascalCase.
-
-### Metadata XML Example
+### 7.2 XML
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <CustomPermission xmlns="http://soap.sforce.com/2006/04/metadata">
-    <description>Allows the user to bypass the Case subject required validation rule. Assign only to support leads and administrators.</description>
-    <label>Bypass Case Validation</label>
+   <description>Allows the user to bypass the Case Subject Required validation rule. Audit-logged. Assign only to support leads and admins.</description>
+   <label>Bypass Case Validation</label>
 </CustomPermission>
 ```
 
-File: `force-app/main/default/customPermissions/BypassCaseValidation.customPermission-meta.xml`
-
-### Using in a Validation Rule
-
-```
-AND(
-  ISBLANK(Subject),
-  NOT($Permission.BypassCaseValidation)
-)
-```
-
-### Using in a Flow Decision
-
-In a Flow Decision element, add a condition:
-- Resource: `$Permission.BypassCaseValidation`
-- Operator: `Equals`
-- Value: `{!$GlobalConstant.False}`
-
-This means: proceed with validation only if the user does NOT have the bypass permission.
-
-### Granting Custom Permission in a Permission Set (XML)
-
-```xml
-<customPermissions>
-    <enabled>true</enabled>
-    <name>BypassCaseValidation</name>
-</customPermissions>
-```
-
----
-
-## 7. Object Permissions
-
-### Permission Matrix
-
-| Permission | When to Grant |
-|---|---|
-| **Read** | User needs to view records of this object |
-| **Create** | User needs to create new records |
-| **Edit** | User needs to modify existing records |
-| **Delete** | User needs to delete records — grant sparingly, document justification |
-| **View All** | User needs to see all records regardless of sharing rules — admin/reporting only |
-| **Modify All** | User needs full CRUD + share on all records regardless of sharing — system/admin use only |
-
-### Least Privilege Rules for Objects
-
-1. Start with no permissions.
-2. Grant Read if the user's role requires viewing records.
-3. Add Create only if the user's role requires creating records.
-4. Add Edit only if the user's role requires modifying records.
-5. Add Delete only with explicit justification — document who approved it.
-6. View All and Modify All are elevated permissions — require architect/admin review and explicit sign-off.
-7. **Never grant Modify All as a shortcut to avoid sharing rule complexity.** Fix the sharing model instead.
-
-### XML Example
-
-```xml
-<objectPermissions>
-    <allowCreate>true</allowCreate>
-    <allowDelete>false</allowDelete>
-    <allowEdit>true</allowEdit>
-    <allowRead>true</allowRead>
-    <modifyAllRecords>false</modifyAllRecords>
-    <object>Case</object>
-    <viewAllRecords>false</viewAllRecords>
-</objectPermissions>
-```
-
----
-
-## 8. Field Permissions
-
-### Rules
-
-- Grant field access explicitly — do not rely on object-level permissions to expose all fields.
-- Never grant more field access than the role requires.
-- Hidden/sensitive fields (SSN, salary, PII) should have no read or edit permission in user-facing PS.
-- FLS (Field Level Security) MUST be enforced in Apex regardless of what the UI shows. Apex code should use `WITH USER_MODE` or explicitly check `Schema.sObjectType.Object__c.fields.Field__c.isAccessible()`.
-- Field permissions are additive across all assigned Permission Sets.
-
-### Field Permission XML Example
-
-```xml
-<fieldPermissions>
-    <editable>true</editable>
-    <field>Case.Description</field>
-    <readable>true</readable>
-</fieldPermissions>
-<fieldPermissions>
-    <editable>false</editable>
-    <field>Case.Internal_Notes__c</field>
-    <readable>false</readable>
-</fieldPermissions>
-```
-
-### FLS Enforcement in Apex
+### 7.3 Apex usage
 
 ```apex
-// Always check before rendering or DML
-if (Schema.sObjectType.Case.fields.Internal_Notes__c.isAccessible()) {
-    // render field
+if (FeatureManagement.checkPermission('BypassCaseValidation')) { /* bypass */ }
+```
+
+### 7.4 `without sharing` gate pattern
+
+Hardcoded `without sharing` is a security-review red flag. Gate it on a Custom Permission so the elevation is explicit and auditable:
+
+```apex
+public with sharing class CaseSearchService {
+   public List<Case> search(String key) {
+      if (FeatureManagement.checkPermission('AllowUnsharedCaseSearch')) {
+         return new UnsharedQuery().run(key);
+      }
+      return [SELECT Id, Subject FROM Case WHERE Subject LIKE :('%' + key + '%') WITH USER_MODE];
+   }
+   private without sharing class UnsharedQuery {
+      public List<Case> run(String key) {
+         return [SELECT Id, Subject FROM Case WHERE Subject LIKE :('%' + key + '%')];
+      }
+   }
 }
-
-// Or use WITH USER_MODE in SOQL (Salesforce enforces FLS automatically)
-List<Case> cases = [SELECT Id, Subject, Description FROM Case WHERE Id = :caseId WITH USER_MODE];
-
-// Or use stripInaccessible before DML
-SObjectAccessDecision decision = Security.stripInaccessible(
-    AccessType.READABLE,
-    [SELECT Id, Subject, Internal_Notes__c FROM Case WHERE Id = :caseId]
-);
-List<Case> safeCases = decision.getRecords();
 ```
 
----
+Grant the Custom Permission only via a narrow PS (e.g. `PS_SearchEscalation`).
 
-## 9. Apex Class Access
+### 7.5 Anti-patterns
 
-### Rule
-
-Any Apex class called from a Lightning Web Component, Visualforce page, or public API requires explicit access granted in the Permission Set. Without this, the class call will throw an insufficient privileges error for non-admin users.
-
-### When Required
-
-- Classes called via `@AuraEnabled` methods from LWC
-- Classes called via REST API
-- Classes invoked from Flows (invocable methods) — these typically inherit running user context
-- Test classes do NOT need to be in PS
-
-### XML Example
-
-```xml
-<classAccesses>
-    <apexClass>CaseDashboardController</apexClass>
-    <enabled>true</enabled>
-</classAccesses>
-<classAccesses>
-    <apexClass>CaseEscalationService</apexClass>
-    <enabled>true</enabled>
-</classAccesses>
-```
-
-### Deployment Note
-
-Apex classes must exist in the org before the Permission Set referencing them is deployed.
-
----
-
-## 10. Flow Access
-
-### Rule
-
-Screen Flows that are launched directly by users (from Quick Actions, App Builder buttons, or utility bars) require explicit permission to run, either through a Permission Set or Profile.
-
-Autolaunched Flows (Record-Triggered, Scheduled) do not require user-level flow access.
-
-### XML Example
-
-```xml
-<flowAccesses>
-    <enabled>true</enabled>
-    <flow>Case_Escalation_Screen_Flow</flow>
-</flowAccesses>
-```
-
-### Deployment Note
-
-The Flow must be active and deployed before the Permission Set is deployed. A PS referencing a non-existent or inactive flow may cause deployment issues.
-
----
-
-## 11. Tab / App Access
-
-### Rules
-
-- Tab and App visibility are separate concerns from object permissions. A user can have object read access without seeing the tab, and vice versa.
-- Grant tab access only to roles whose workflow involves navigating to that tab.
-- App access controls which Lightning Apps appear in the App Launcher.
-- Avoid giving all users access to all apps — this creates a confusing App Launcher experience.
-
-### XML Example
-
-```xml
-<tabSettings>
-    <tab>Case</tab>
-    <visibility>Available</visibility>
-</tabSettings>
-<tabSettings>
-    <tab>standard-report</tab>
-    <visibility>Available</visibility>
-</tabSettings>
-<applicationVisibilities>
-    <application>standard__ServiceConsole</application>
-    <default>false</default>
-    <visible>true</visible>
-</applicationVisibilities>
-```
-
-### Tab Visibility Values
-
-| Value | Meaning |
+| Wrong | Right |
 |---|---|
-| `Hidden` | Tab not visible to user |
-| `Available` | Tab available but not default; user can pin it |
-| `DefaultOn` | Tab visible and pinned by default |
+| Hardcoded profile name check: `if (UserInfo.getProfileId() == '00e...')` | `FeatureManagement.checkPermission('X')` |
+| Custom Setting flag `Bypass__c = true` checked against username | Custom Permission granted via PS |
+| Multiple validation rules each checking `$Profile.Name = 'System Administrator'` | Single Custom Permission `BypassValidation`, referenced in every rule |
 
 ---
 
-## 12. Least Privilege Principle
+## 8. Agentforce Access Patterns
 
-### Checklist
+Two distinct agent types, two distinct access paths.
 
-- [ ] Start with no permissions. Add only what the role explicitly requires.
-- [ ] Document each permission grant with a business justification before merging.
-- [ ] Review all Permission Sets quarterly — remove grants that are no longer required.
-- [ ] Never grant Delete, View All, or Modify All as a convenience. These require escalated approval.
-- [ ] Never grant permissions to unblock a developer — use a temporary test PS and remove after testing.
-- [ ] Do not copy an existing PS and modify it without reviewing what the source PS grants.
-- [ ] Sensitive objects (Financial, PII, HR data) require documented approval before any PS grants access.
-- [ ] Custom Permissions used as bypass flags must be documented in a registry (e.g., a Custom Metadata record listing all bypass permissions and their justification).
+### 8.1 `AgentforceEmployeeAgent`
 
-### Quarterly Review Process
-
-1. Pull list of all users and their assigned PS/PSG.
-2. Compare against current role definitions.
-3. Flag users who have PS assignments beyond their current role.
-4. Remove excess permissions after manager confirmation.
-5. Document the review date in the PS description field.
-
----
-
-## 13. Avoiding Profile Changes
-
-### Rule
-
-If a task requires adding or modifying permissions and you are asked to edit a Profile, **STOP**. Instead:
-1. Create a new Permission Set (or update an existing one) with the required permissions.
-2. Assign the Permission Set to the users or to the Permission Set Group for that role.
-3. Document why a Profile was not used.
-
-### Documented Exceptions
-
-The only acceptable reasons to modify a Profile:
-- Changing login hours or IP restrictions (these cannot go in PS)
-- Changing the default record type assignment (until full PS migration is available)
-- Emergency hotfix where no PS exists and deployment is time-critical — must be followed by PS migration within one sprint
-
-### When Asked to Edit a Profile
-
-Respond:
-> "Per our access control guidelines, permissions are managed via Permission Sets, not Profiles. I will create/update the relevant Permission Set instead. If you need to change login hours or IP ranges, I will update the Profile only for that specific setting."
-
----
-
-## 14. Packaging / Deployment
-
-### Deployment Rules
-
-1. **Objects and Fields FIRST** — a PS referencing an object/field that doesn't exist will fail deployment.
-2. **Custom Permissions** — deploy before Permission Sets that reference them.
-3. **Apex Classes** — deploy before PS that grant Apex access.
-4. **Flows** — activate before PS that grant Flow access.
-5. **Component Permission Sets** — deploy before the PSG that composes them.
-6. **Muting Permission Sets** — deploy before the PSG that references them.
-7. **Permission Set Groups** — deploy last in the access control chain.
-
-### Naming Stability
-
-- API names (DeveloperName) are permanent — they cannot be changed after deployment without destructive metadata changes.
-- Never use temporary or sequential names like `PS_V2`, `PS_New`, `PS_Temp`.
-- Plan the name before first deployment.
-
-### package.xml Examples
-
-```xml
-<!-- Permission Sets -->
-<types>
-    <members>PS_SupportAgent</members>
-    <members>PS_ReadOnly</members>
-    <members>PS_CaseViewer</members>
-    <name>PermissionSet</name>
-</types>
-
-<!-- Permission Set Groups -->
-<types>
-    <members>PSG_SupportAgent</members>
-    <name>PermissionSetGroup</name>
-</types>
-
-<!-- Muting Permission Sets -->
-<types>
-    <members>MPS_SupportAgent_NoCaseDelete</members>
-    <name>MutingPermissionSet</name>
-</types>
-
-<!-- Custom Permissions -->
-<types>
-    <members>BypassCaseValidation</members>
-    <name>CustomPermission</name>
-</types>
+```
+User → PSG_<AgentName>_User
+         ├── <AgentName>_Access (custom PS — you author this)
+         │     ├── agentAccesses for the agent itself
+         │     ├── classAccesses for every apex:// action target
+         │     ├── flowAccesses for every flow:// action target
+         │     └── customPermissions used by the agent
+         └── (optional) PS for data access the actions need
 ```
 
+PS naming: `<AgentName>_Access` (e.g. `Email_Analysis_Agent_Access`). Mirror every `apex://`, `flow://`, `prompt://` target in the `.agent` file.
+
+### 8.2 `AgentforceServiceAgent`
+
+```
+Bot User → AgentforceServiceAgentUser (system PS — DO NOT MODIFY)
+         + <AgentName>_Access (custom PS — you author this)
+```
+
+The system PS `AgentforceServiceAgentUser` ships with Salesforce and provides Messaging/channel infrastructure. Your custom PS supplies the agent-specific class/flow/object grants. The bot user (`config.default_agent_user` per [agentforce-agent-script-reference.md](agentforce-agent-script-reference.md) §5) MUST have both PS assigned.
+
+### 8.3 The planner permission-check trap
+
+The agent planner evaluates **every action's permission requirements at planning time**, not invocation time. If the running user is missing class access for any single action in the bundle:
+
+- The planner silently drops that action from the LLM's toolset.
+- In some cases the planner short-circuits the entire action surface and the LLM falls back to free-text generation.
+- No error surfaces in standard logs — only `enable_enhanced_event_logs: True` reveals the gap.
+
+**Mitigation:** the `<AgentName>_Access` PS must mirror the agent's action manifest. On every `.agent` change, grep the PS for matching `classAccesses` / `flowAccesses` lines and add any missing entry before publish.
+
 ---
 
-## 15. Complete Example
-
-### PS_SupportAgent — Full Permission Set XML
+## 9. Complete Example — `PS_SupportAgent`
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
-    <description>
-        Core permissions for Level 1 Support Agents.
-        Grants Case CRUD (no delete), Contact Read, AppLog__c Create,
-        CaseDashboardController Apex access, and BypassCaseValidation custom permission.
-        Owner: Support Team. Last reviewed: April 2026.
-    </description>
-    <hasActivationRequired>false</hasActivationRequired>
-    <label>Support Agent Permissions</label>
-    <license>Salesforce</license>
+   <label>Support Agent Permissions</label>
+   <description>Level 1 Support — Case CRUD (no delete), Contact Read, dashboard Apex access. Owner: Support Engineering. Last reviewed: 2026-05-16.</description>
+   <hasActivationRequired>false</hasActivationRequired>
+   <license>Salesforce</license>
 
-    <!-- Object Permissions -->
-    <objectPermissions>
-        <allowCreate>true</allowCreate>
-        <allowDelete>false</allowDelete>
-        <allowEdit>true</allowEdit>
-        <allowRead>true</allowRead>
-        <modifyAllRecords>false</modifyAllRecords>
-        <object>Case</object>
-        <viewAllRecords>false</viewAllRecords>
-    </objectPermissions>
+   <objectPermissions>
+      <allowCreate>true</allowCreate>
+      <allowDelete>false</allowDelete>
+      <allowEdit>true</allowEdit>
+      <allowRead>true</allowRead>
+      <modifyAllRecords>false</modifyAllRecords>
+      <object>Case</object>
+      <viewAllRecords>false</viewAllRecords>
+   </objectPermissions>
+   <objectPermissions>
+      <allowCreate>false</allowCreate>
+      <allowDelete>false</allowDelete>
+      <allowEdit>false</allowEdit>
+      <allowRead>true</allowRead>
+      <modifyAllRecords>false</modifyAllRecords>
+      <object>Contact</object>
+      <viewAllRecords>false</viewAllRecords>
+   </objectPermissions>
 
-    <objectPermissions>
-        <allowCreate>false</allowCreate>
-        <allowDelete>false</allowDelete>
-        <allowEdit>false</allowEdit>
-        <allowRead>true</allowRead>
-        <modifyAllRecords>false</modifyAllRecords>
-        <object>Contact</object>
-        <viewAllRecords>false</viewAllRecords>
-    </objectPermissions>
+   <fieldPermissions>
+      <editable>true</editable>
+      <field>Case.Description</field>
+      <readable>true</readable>
+   </fieldPermissions>
+   <fieldPermissions>
+      <editable>false</editable>
+      <field>Case.Internal_Notes__c</field>
+      <readable>false</readable>
+   </fieldPermissions>
 
-    <objectPermissions>
-        <allowCreate>true</allowCreate>
-        <allowDelete>false</allowDelete>
-        <allowEdit>false</allowEdit>
-        <allowRead>true</allowRead>
-        <modifyAllRecords>false</modifyAllRecords>
-        <object>AppLog__c</object>
-        <viewAllRecords>false</viewAllRecords>
-    </objectPermissions>
+   <classAccesses>
+      <apexClass>CaseDashboardController</apexClass>
+      <enabled>true</enabled>
+   </classAccesses>
 
-    <!-- Field Permissions: Case -->
-    <fieldPermissions>
-        <editable>true</editable>
-        <field>Case.Subject</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>true</editable>
-        <field>Case.Description</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>true</editable>
-        <field>Case.Status</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>false</editable>
-        <field>Case.Internal_Notes__c</field>
-        <readable>false</readable>
-    </fieldPermissions>
+   <flowAccesses>
+      <enabled>true</enabled>
+      <flow>Case_Escalation_Screen_Flow</flow>
+   </flowAccesses>
 
-    <!-- Field Permissions: Contact -->
-    <fieldPermissions>
-        <editable>false</editable>
-        <field>Contact.FirstName</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>false</editable>
-        <field>Contact.LastName</field>
-        <readable>true</readable>
-    </fieldPermissions>
-    <fieldPermissions>
-        <editable>false</editable>
-        <field>Contact.Email</field>
-        <readable>true</readable>
-    </fieldPermissions>
+   <customPermissions>
+      <enabled>true</enabled>
+      <name>BypassCaseValidation</name>
+   </customPermissions>
 
-    <!-- Apex Class Access -->
-    <classAccesses>
-        <apexClass>CaseDashboardController</apexClass>
-        <enabled>true</enabled>
-    </classAccesses>
-
-    <!-- Custom Permission -->
-    <customPermissions>
-        <enabled>true</enabled>
-        <name>BypassCaseValidation</name>
-    </customPermissions>
-
-    <!-- Tab Visibility -->
-    <tabSettings>
-        <tab>Case</tab>
-        <visibility>Available</visibility>
-    </tabSettings>
-
-    <!-- App Visibility -->
-    <applicationVisibilities>
-        <application>standard__ServiceConsole</application>
-        <default>false</default>
-        <visible>true</visible>
-    </applicationVisibilities>
+   <tabSettings>
+      <tab>Case</tab>
+      <visibility>Available</visibility>
+   </tabSettings>
+   <applicationVisibilities>
+      <application>standard__ServiceConsole</application>
+      <default>false</default>
+      <visible>true</visible>
+   </applicationVisibilities>
+   <userPermissions>
+      <enabled>true</enabled>
+      <name>RunReports</name>
+   </userPermissions>
 </PermissionSet>
 ```
 
-File: `force-app/main/default/permissionSets/PS_SupportAgent.permissionSet-meta.xml`
+---
+
+## 10. Deployment Order
+
+Deploy in this order. Reversing any step causes referenced-component-missing errors.
+
+```
+1. Custom Objects, Custom Fields           (foundation)
+2. Custom Permissions                       (referenced by PS, validation rules)
+3. Apex Classes                             (referenced by classAccesses)
+4. Flows                                    (referenced by flowAccesses — must be deployed, not necessarily Active)
+5. Apps, Tabs, Record Types                 (referenced by visibility blocks)
+6. Permission Sets                          (component PS)
+7. Muting Permission Sets                   (referenced by PSGs)
+8. Permission Set Groups                    (composed last)
+9. Permission Set Assignments               (manual, post-deploy, via UI or apex script)
+```
+
+The Case Flow Migration project's manifest (`manifest/package-case-flow-optimization.xml`) deploys PS metadata alongside Flows and Apex — no separate assignment step is included; Naresh handles assignment in sandbox after validation. See `CLAUDE.md` §4.
 
 ---
 
-## 16. Common AI Mistakes to Avoid
+## 11. Validation Commands
 
-| Mistake | Why It's Wrong | Correct Approach |
+```bash
+# Dry-run a PS-only deploy
+sf project deploy start \
+   --source-dir force-app/main/default/permissionSets \
+   --dry-run --test-level RunLocalTests \
+   --target-org PlusGradeFullSB --wait 60
+
+# Deploy PS + PSG + custom permissions together
+sf project deploy start \
+   --metadata "PermissionSet,PermissionSetGroup,MutingPermissionSet,CustomPermission" \
+   --target-org PlusGradeFullSB
+
+# Retrieve a single PS for review
+sf project retrieve start \
+   --metadata "PermissionSet:PS_SupportAgent" \
+   --target-org PlusGradeFullSB
+
+# Who has this PS today?
+sf data query \
+   --query "SELECT Assignee.Username, Assignee.Name FROM PermissionSetAssignment WHERE PermissionSet.Name = 'PS_SupportAgent'" \
+   --target-org PlusGradeFullSB
+
+# Verify a custom permission is granted on a PS
+sf data query \
+   --query "SELECT Id, SetupEntityType, SetupEntityId FROM SetupEntityAccess WHERE SetupEntityType = 'CustomPermission' AND ParentId IN (SELECT Id FROM PermissionSet WHERE Name = 'PS_SupportAgent')" \
+   --target-org PlusGradeFullSB
+
+# Which PSG references this component PS?
+sf data query \
+   --query "SELECT PermissionSetGroup.DeveloperName FROM PermissionSetGroupComponent WHERE PermissionSet.Name = 'PS_Object_RW_Case'" \
+   --target-org PlusGradeFullSB
+```
+
+---
+
+## 12. Definition of Done
+
+A Permission Set / PSG / Muting PS is complete when:
+
+- [ ] API name matches the `PS_` / `PSG_` / `MPS_` convention; no `_V2` / `_Temp` / `_New` suffixes
+- [ ] `<label>` set and `<description>` includes owner, purpose, and `Last reviewed: YYYY-MM-DD`
+- [ ] Every permission grant has a business justification (in PS description or accompanying doc)
+- [ ] No `viewAllRecords` / `modifyAllRecords` / `ViewAllData` / `ModifyAllData` / `ManageUsers` without architect sign-off
+- [ ] No required fields, no formula `editable=true` entries in `<fieldPermissions>`
+- [ ] Standard tabs use `standard-` prefix; custom object tabs include `__c`
+- [ ] Apex/Flow references match metadata that exists in the org
+- [ ] For agent PS: `<agentAccesses>` plus a `<classAccesses>` entry for every action's `apex://` target
+- [ ] If composed into a PSG: PSG `<status>` set to `Updated`
+- [ ] If muting: muting semantics (true = remove) verified against component PS
+- [ ] Dry-run deploy passes with zero component errors against `PlusGradeFullSB`
+
+---
+
+## 13. Common AI Mistakes to Avoid
+
+| Mistake | Why It's Wrong | Correct approach |
 |---|---|---|
 | Adding object/field permissions to a Profile | Profiles should only define baseline; permissions go in PS | Create or update a Permission Set |
 | Granting Modify All as a shortcut | Over-privilege; bypasses sharing rules entirely | Fix the sharing model; grant View All only if needed with justification |
@@ -717,95 +586,38 @@ File: `force-app/main/default/permissionSets/PS_SupportAgent.permissionSet-meta.
 | Using temporary PS names (`PS_Temp`, `PS_V2`) | API name cannot change; will cause naming debt | Plan stable names before first deployment |
 | Creating one giant PS for all permissions | Impossible to reuse or compose | Break into domain-scoped PS; compose with PSG |
 | Assigning individual PS when a PSG exists | Creates assignment inconsistency | Always assign the PSG for role-based access |
+| Including required fields in `<fieldPermissions>` | Deployment failure — Salesforce rejects FLS on required fields | Omit required fields entirely; they're accessible by default |
+| Setting `editable=true` on a formula field | Deployment failure — formulas are read-only | Set `editable=false`, `readable=true` |
+| Using bare standard tab name `Account` instead of `standard-Account` | Deployment failure on tab reference | Always prefix standard tabs with `standard-` |
+| Treating `MutingPermissionSet` `true` as "grant" | Inverted semantics — muting removes, not adds | In MPS, `true`/`enabled=true` means "remove this permission from the PSG total" |
+| Skipping `classAccesses` for an Agentforce action's apex target | Planner silently drops the action; agent hallucinates | Audit `<AgentName>_Access` PS against the agent's action manifest before publish |
+| Assigning a component PS directly when a PSG exists for that role | Inconsistent access; PSG recalc skips direct assignments | Always assign the PSG, not the component |
 
 ---
 
-## 17. Definition of Done
+## 14. Empirical Findings & Implementation Notes
 
-A Permission Set (or PSG) is considered complete and deployable when ALL of the following are true:
+When Salesforce's documented approach doesn't work in this org, the workaround goes here. Date-stamp every entry.
 
-- [ ] API name follows `PS_<Domain>` convention and is stable (no temp names)
-- [ ] Label and description are set; description includes owner, purpose, and last review date
-- [ ] Every permission grant has a documented business justification
-- [ ] Least privilege check passed: no Modify All, no unnecessary Delete, no View All without approval
-- [ ] Custom Permissions used for any bypass logic (no hardcoded profile names anywhere)
-- [ ] PSG composition is documented: which component PS are included and why
-- [ ] Muting PS defined where component PS over-grant for a specific PSG
-- [ ] Deployed after all dependency metadata (objects, fields, Apex, Flows) is in the org
-- [ ] Tested in sandbox: test user assigned to PS/PSG, all granted permissions verified accessible, all withheld permissions verified inaccessible
-- [ ] Quarterly review date documented in PS description
+| # | Date | Documented approach | What actually works | Why / Context |
+|---|---|---|---|---|
 
 ---
 
-## 18. Validation Commands
+## 15. Official References
 
-### Deploy and Validate
-
-```bash
-# Deploy permission sets (check-only first)
-sf project deploy start \
-  --source-dir force-app/main/default/permissionSets \
-  --dry-run \
-  --target-org <alias>
-
-# Deploy for real
-sf project deploy start \
-  --source-dir force-app/main/default/permissionSets \
-  --target-org <alias>
-
-# Deploy permission set groups
-sf project deploy start \
-  --source-dir force-app/main/default/permissionSetGroups \
-  --target-org <alias>
-
-# Deploy custom permissions
-sf project deploy start \
-  --source-dir force-app/main/default/customPermissions \
-  --target-org <alias>
-```
-
-### Retrieve Existing Metadata
-
-```bash
-# Retrieve all permission sets
-sf project retrieve start \
-  --metadata "PermissionSet" \
-  --target-org <alias>
-
-# Retrieve a specific PS
-sf project retrieve start \
-  --metadata "PermissionSet:PS_SupportAgent" \
-  --target-org <alias>
-```
-
-### Verify Permission Assignment via SOQL
-
-```bash
-# Check which users have a specific PS assigned
-sf data query \
-  --query "SELECT AssigneeId, Assignee.Name, PermissionSet.Name FROM PermissionSetAssignment WHERE PermissionSet.Name = 'PS_SupportAgent'" \
-  --target-org <alias>
-
-# Check which PS a specific user has
-sf data query \
-  --query "SELECT PermissionSet.Name, PermissionSet.Label FROM PermissionSetAssignment WHERE Assignee.Username = 'testuser@example.com'" \
-  --target-org <alias>
-
-# Verify a custom permission is enabled in a PS
-sf data query \
-  --query "SELECT Id, SetupEntityId FROM SetupEntityAccess WHERE SetupEntityType = 'CustomPermission' AND ParentId IN (SELECT Id FROM PermissionSet WHERE Name = 'PS_SupportAgent')" \
-  --target-org <alias>
-```
+- [PermissionSet — Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_permissionset.htm)
+- [PermissionSetGroup — Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_permissionsetgroup.htm)
+- [MutingPermissionSet — Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_mutingpermissionset.htm)
+- [CustomPermission — Metadata API](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_custompermission.htm)
+- [Permission Set Groups Overview — Salesforce Help](https://help.salesforce.com/s/articleView?id=sf.perm_sets_groups_overview.htm)
+- [Muting Permission Sets — Salesforce Help](https://help.salesforce.com/s/articleView?id=sf.perm_set_groups_muting.htm)
+- [Custom Permissions Overview — Salesforce Help](https://help.salesforce.com/s/articleView?id=sf.custom_perms_overview.htm)
+- [Field-Level Security — Salesforce Help](https://help.salesforce.com/s/articleView?id=sf.admin_fls.htm)
+- [FeatureManagement Class — Apex Reference](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_class_System_FeatureManagement.htm)
+- [forcedotcom/sf-skills `generating-permission-set`](https://github.com/forcedotcom/sf-skills/tree/main/skills/generating-permission-set) — canonical XML reference
+- [Salesforce Well-Architected: Trusted/Security](https://architect.salesforce.com/well-architected/trusted/security)
 
 ---
 
-## 19. Official References
-
-- Salesforce Help: [Permission Sets](https://help.salesforce.com/s/articleView?id=sf.perm_sets_overview.htm)
-- Salesforce Help: [Permission Set Groups](https://help.salesforce.com/s/articleView?id=sf.perm_set_groups.htm)
-- Salesforce Help: [Muting Permission Sets](https://help.salesforce.com/s/articleView?id=sf.perm_set_groups_muting.htm)
-- Salesforce Help: [Custom Permissions](https://help.salesforce.com/s/articleView?id=sf.custom_perms_overview.htm)
-- Salesforce Metadata API: [PermissionSet](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_permissionset.htm)
-- Salesforce Security Guide: [Field-Level Security](https://help.salesforce.com/s/articleView?id=sf.admin_fls.htm)
-- Trailhead: [Data Security](https://trailhead.salesforce.com/content/learn/modules/data_security)
-- Salesforce Well-Architected: [Security](https://architect.salesforce.com/well-architected/trusted/security)
+*Permission Set & Access Control Guidelines | v3.0 | Last verified 2026-05-16*
