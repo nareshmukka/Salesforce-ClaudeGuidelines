@@ -1,0 +1,3 @@
+# Require the repository owner to review all changes when GitHub branch
+# protection has "Require review from Code Owners" enabled.
+* @nareshmukka

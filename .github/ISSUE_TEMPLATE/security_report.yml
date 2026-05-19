@@ -1,0 +1,26 @@
+name: Security or privacy concern
+description: Report exposed sensitive content or unsafe guidance.
+title: "[Security]: "
+labels:
+  - security
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include live secrets in this issue. If the concern is sensitive, use a private GitHub security advisory or contact the repository owner directly."
+  - type: textarea
+    id: concern
+    attributes:
+      label: Concern
+      description: Describe the security or privacy concern without repeating live secrets.
+    validations:
+      required: true
+  - type: input
+    id: location
+    attributes:
+      label: Affected location
+      placeholder: "File path, skill name, or pull request"
+  - type: textarea
+    id: remediation
+    attributes:
+      label: Suggested remediation
+      description: What should be removed, rotated, rewritten, or clarified?

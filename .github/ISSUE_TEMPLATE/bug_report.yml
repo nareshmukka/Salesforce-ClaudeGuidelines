@@ -1,0 +1,31 @@
+name: Bug report
+description: Report an incorrect, broken, or unsafe repository guideline.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: "Please do not include secrets, org URLs, record IDs, customer names, or private environment details."
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is incorrect, broken, unclear, or unsafe?
+    validations:
+      required: true
+  - type: input
+    id: path
+    attributes:
+      label: Affected file or skill
+      placeholder: "salesforce-ai-skills/skills/<skill-name>/SKILL.md"
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should the guidance say or do instead?
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation notes
+      description: Include local validation results if available.

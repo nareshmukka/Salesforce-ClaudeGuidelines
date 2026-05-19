@@ -1,0 +1,32 @@
+name: Skill request
+description: Request a new or improved Salesforce AI skill.
+title: "[Skill]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: "Keep this generic. Do not include customer-specific, org-specific, or secret information."
+  - type: input
+    id: domain
+    attributes:
+      label: Salesforce domain
+      placeholder: "Apex, Flow, LWC, Agentforce, Data Cloud, OmniStudio..."
+    validations:
+      required: true
+  - type: textarea
+    id: need
+    attributes:
+      label: What should the skill help with?
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Generic examples or scenarios
+      description: Use placeholders instead of real org, customer, or environment details.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: What would make this request complete?
