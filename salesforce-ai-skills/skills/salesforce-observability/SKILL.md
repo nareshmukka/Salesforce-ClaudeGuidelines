@@ -260,7 +260,7 @@ A correlation ID is a token assigned at the entry point of a multi-step operatio
 // Inline -- no helper method on the deployed AppLogger
 String correlationId = String.valueOf(UserInfo.getUserId()).substring(0, 15)
     + '-' + String.valueOf(System.currentTimeMillis());
-// e.g. 005Xx000001gXXX-1747400000000
+// e.g. <user-id-prefix>-1747400000000
 ```
 
 Use the same format consistently so reports can group by token prefix.
@@ -440,7 +440,7 @@ Free-text messages are searchable but slow to aggregate. Structured `key=value` 
 **Preferred -- structured key=value:**
 
 ```
-cid=005Xx000001gXXX-1747400000000 op=ProcessInbound caseId=500Xx... status=ok duration=145ms
+cid=<user-id-prefix>-1747400000000 op=ProcessInbound caseId=<case-id> status=ok duration=145ms
 ```
 
 **Avoid -- prose:**

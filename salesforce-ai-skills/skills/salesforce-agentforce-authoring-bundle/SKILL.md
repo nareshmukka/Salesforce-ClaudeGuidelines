@@ -258,7 +258,7 @@ generate -> edit -> validate -> deploy -> publish -> activate -> preview/test ->
 ## 5. Generate
 
 ```bash
-sf agent generate authoring-bundle --json --no-spec --name "Email Analysis Agent" --api-name Email_Analysis_Agent
+sf agent generate authoring-bundle --json --no-spec --name "Example Agent" --api-name Example_Agent
 ```
 
 | Flag | Purpose |
@@ -271,9 +271,9 @@ sf agent generate authoring-bundle --json --no-spec --name "Email Analysis Agent
 Creates:
 
 ```
-aiAuthoringBundles/Email_Analysis_Agent/
-   Email_Analysis_Agent.agent
-   Email_Analysis_Agent.bundle-meta.xml
+aiAuthoringBundles/Example_Agent/
+   Example_Agent.agent
+   Example_Agent.bundle-meta.xml
 ```
 
 The starter `.agent` file has placeholder content. You edit it in place.
@@ -283,7 +283,7 @@ The starter `.agent` file has placeholder content. You edit it in place.
 ## 6. Validate
 
 ```bash
-sf agent validate authoring-bundle --json --api-name Email_Analysis_Agent
+sf agent validate authoring-bundle --json --api-name Example_Agent
 ```
 
 - Local syntax + structure check. Fast feedback during inner-loop authoring.
@@ -302,21 +302,21 @@ sf agent validate authoring-bundle --json --api-name Email_Analysis_Agent
 sf project deploy start --json --metadata ApexClass Flow
 
 # Then (optional) push the authoring bundle to the org
-sf project deploy start --json --metadata AiAuthoringBundle:Email_Analysis_Agent
+sf project deploy start --json --metadata AiAuthoringBundle:Example_Agent
 ```
 
 **Scope deploys explicitly.** A bare `sf project deploy start` deploys all local changes -- that can accidentally push an outdated `.agent` file and overwrite in-progress work in Builder. Always list metadata types.
 
 **Multiple types are space-separated, NOT comma-separated:** `--metadata ApexClass Flow` (correct), `--metadata ApexClass,Flow` (wrong).
 
-**Wildcards must be quoted:** `--metadata "AiAuthoringBundle:Email_Analysis_Agent_*"`.
+**Wildcards must be quoted:** `--metadata "AiAuthoringBundle:Example_Agent_*"`.
 
 ---
 
 ## 8. Publish
 
 ```bash
-sf agent publish authoring-bundle --json --api-name Email_Analysis_Agent
+sf agent publish authoring-bundle --json --api-name Example_Agent
 ```
 
 What publish does:
@@ -353,7 +353,7 @@ What publish does:
 <?xml version="1.0" encoding="UTF-8"?>
 <Package xmlns="http://soap.sforce.com/2006/04/metadata">
    <types>
-      <members>Email_Analysis_Agent</members>
+      <members>Example_Agent</members>
       <name>Bot</name>
    </types>
    <version>66.0</version>
@@ -367,8 +367,8 @@ sf project deploy start --json --manifest manifest/package-email-analysis-bot-ov
 
 Verify post-deploy by retrieving and checking the value:
 ```bash
-sf project retrieve start --json --metadata Bot:Email_Analysis_Agent
-grep logPrivateConversationData force-app/main/default/bots/Email_Analysis_Agent/Email_Analysis_Agent.bot-meta.xml
+sf project retrieve start --json --metadata Bot:Example_Agent
+grep logPrivateConversationData force-app/main/default/bots/Example_Agent/Example_Agent.bot-meta.xml
 ```
 
 ---
@@ -391,16 +391,16 @@ sf agent deactivate --json --api-name <Bot_API_Name>
 
 ```bash
 # Start session against local source (real actions)
-sf agent preview start --json --use-live-actions --authoring-bundle Email_Analysis_Agent
+sf agent preview start --json --use-live-actions --authoring-bundle Example_Agent
 
 # Start session against the published live version
-sf agent preview start --json --api-name Email_Analysis_Agent
+sf agent preview start --json --api-name Example_Agent
 
 # Send an utterance
-sf agent preview send --json --authoring-bundle Email_Analysis_Agent --session-id <ID> -u "Analyze Case 500..."
+sf agent preview send --json --authoring-bundle Example_Agent --session-id <ID> -u "Analyze Case <case-id>"
 
 # End and get trace paths
-sf agent preview end --json --authoring-bundle Email_Analysis_Agent --session-id <ID>
+sf agent preview end --json --authoring-bundle Example_Agent --session-id <ID>
 ```
 
 | Mode | Flag pair | When |
@@ -512,7 +512,7 @@ public with sharing class EmailAnalysisAgentInvoker {
       );
 
       Agent.GenerateAiAgentResponseInput input = new Agent.GenerateAiAgentResponseInput();
-      input.agentApiName = 'Email_Analysis_Agent';
+      input.agentApiName = 'Example_Agent';
       input.message = message;
 
       Agent.GenerateAiAgentResponseOutput out = Agent.generateAiAgentResponse(input);
@@ -599,13 +599,13 @@ When Salesforce's documented approach doesn't work in the target environment, th
 | 2 | 2026-05-15 | `id` listed as first-class scalar for record IDs | Three idioms exist for the same semantic: `type: string`, `type: id`, and `type: object` + `complex_data_type_name: "lightning__recordIdType"`. Form (b) `type: id` is canonical for new authoring | <target-env-alias> observation, Spring '26 |
 | 3 | 2026-05-15 | Builder UI doc lists per-topic SCOPE / INSTRUCTIONS / GUARDRAILS / USER INPUT EXAMPLES | The DSL has no separate `scope:` / `guardrails:` keys. Convention: Classification + Scope -> `subagent.description:`; Instructions -> `reasoning.instructions:`; Guardrails -> trailing `\|GUARDRAILS:` block; User Input Examples -> `start_agent` transition `description:` strings | Builder UI structure doesn't map 1:1 to DSL keys |
 | 4 | 2026-05-15 | Some sketches imply a `contains` (substring-match) operator in `->` blocks | No `contains` operator is documented. Use LLM-mediated routing instead: narrow STEP 0 prose + `@utils.transition to @subagent.X` actions with narrow `description:` strings | <target-env-alias>, Spring '26 |
-| 5 | 2026-05-15 | Section 4 deploy-order ("Apex -> Flows -> GenAiFunctions -> publish") + peer manifests imply a brand-new agent can be bootstrapped via `sf project deploy start --manifest` | That order ONLY works for UPDATES. For first-time creation: (1) Deploy Apex + Flow via manifest; (2) `sf agent publish authoring-bundle --api-name <Name>` creates Bot + v1 BotVersion + GenAiPlannerBundle atomically; (3) `sf project retrieve start --metadata Bot:<Name>` populates source files. Deploying BotVersion via manifest fails with "Required fields are missing: [PlannerId]" | Discovered while bootstrapping `Email_Analysis_Agent` |
+| 5 | 2026-05-15 | Section 4 deploy-order ("Apex -> Flows -> GenAiFunctions -> publish") + peer manifests imply a brand-new agent can be bootstrapped via `sf project deploy start --manifest` | That order ONLY works for UPDATES. For first-time creation: (1) Deploy Apex + Flow via manifest; (2) `sf agent publish authoring-bundle --api-name <Name>` creates Bot + v1 BotVersion + GenAiPlannerBundle atomically; (3) `sf project retrieve start --metadata Bot:<Name>` populates source files. Deploying BotVersion via manifest fails with "Required fields are missing: [PlannerId]" | Discovered while bootstrapping `Example_Agent` |
 | 6 | 2026-05-15 | The `AiAuthoringBundle` deploy path is implicit | `AiAuthoringBundle` is never deployed via `sf project deploy start --manifest` in this project's workflow. `sf agent publish authoring-bundle` is the sole publish path. No peer manifest lists `AiAuthoringBundle` under `<types>` | Cross-references finding #5 |
 | 7 | 2026-05-15 | `sf agent publish authoring-bundle` uses the locally-authored `Bot.bot-meta.xml` as source of truth | The publish command IGNORES the local bot-meta and creates the Bot from org-template defaults. It auto-retrieves the org's Bot state back, OVERWRITING the local file. Three security-critical fields were stripped during a real publish: `<logPrivateConversationData>false</logPrivateConversationData>` flipped to `true`; `<agentTemplate>EmployeeCopilot__AgentforceEmployeeAgent</agentTemplate>` dropped; the 5 standard `<contextVariables>` dropped. **Workaround:** deploy a Bot-only override manifest IMMEDIATELY after every publish | CRITICAL for any agent processing PII -- org default `logPrivateConversationData=true` re-introduces PII-logging risk. See Section 8 publish-then-override pattern |
 | 8 | 2026-05-15 | Canonical-form regex `(?i)(?:confirmation\s*(?:number\|#\|code)?\s*[:\-]?\s*)?([A-Z0-9]{4}(?:[\s-]?[A-Z0-9]{4}){4})\b` for confirmation codes | Missing leading `\b` causes greedy-match into preceding English words. Example: `"Please resend ABCD-1234-EFGH-5678-WXYZ"` mis-captures `"send ABCD-1234-EFGH-5678"` (taking "send" from "re**send**" + first 4 groups). Fix: prepend `\b` so the first capture group must begin at a word boundary | Caught by test environment test T4f-body on 2026-05-15; fix deployed same day |
 | 9 | 2026-05-16 | `sf agent publish authoring-bundle --authoring-bundle <Name>` per [agent-dx-nga-publish doc page](https://developer.salesforce.com/docs/ai/agentforce/guide/agent-dx-nga-publish.html) | CLI rejects `--authoring-bundle` on publish -- only `--api-name` (short `-n`) is accepted. The cited doc page is stale relative to the shipping CLI. Always cross-check with `sf agent publish authoring-bundle --help` before authoring publish commands | <target-env-alias>, sf CLI v2 on 2026-05-15 |
-| 10 | 2026-05-16 | `sf agent preview send --json --authoring-bundle <Name>` returns the agent's complete response, suitable for end-to-end functional testing | The CLI's `result.messages[]` payload only contains the FIRST post-transition LLMStep response. Multi-iteration reasoning loops (subagent action calls -> variable updates -> next LLMStep -> final summary) are NOT aggregated into the response payload. A trace where `prompt_response.tool_invocations: null` on the first subagent LLMStep does NOT mean the agent failed to call actions -- only that the CLI captured the response before subsequent iterations completed. **For end-to-end functional validation use:** (a) Agentforce Builder UI (Test panel), or (b) a real `Agent.generateAiAgentResponse` invocation from Apex (which is what production runs anyway), or (c) trigger the actual production path (e.g., insert a test EmailMessage to a Resend Email Testing recordtype Case and check `Agent_Activity_Log__c` after the async Queueable completes) | Production-validated on <target-env-alias> 2026-05-16 when CLI `preview send --authoring-bundle Email_Analysis_Agent` reported empty agent responses for 5 live tests, but Builder UI test + real EmailMessage trigger test both succeeded end-to-end. Spent ~1 hour chasing the CLI false-negative before the Builder UI test exposed it. Use the right test surface for the right phase: CLI for session-debugging individual steps, Builder UI / production-path for functional verification |
-| 11 | 2026-05-16 | `Agent_Activity_Log__c.AI_Tool_Name__c` reflects the active agent in use | The trigger-path (`InboundEmailOrchestrator.invokeAndDecide` lines 213, 227) and SFMC queueable (`SfmcCalloutQueueable.buildLog` line 192) **hardcode** `'Email Resend Agent'` as `AI_Tool_Name__c`. After the cutover to `Email_Analysis_Agent` v6, the logs still say "Email Resend Agent" -- misleading for reporting and observability. The actual agent invoked is `ResendConfiguration.getConfig().agentApiName` ('Email_Analysis_Agent') but the log label doesn't track the cutover. **Recommendation:** refactor to read the label from `ResendConfiguration` (add an `agentLogLabel` field) or derive from `agentApiName` at log-write time | Observed during end-to-end cutover verification: Case 500As00000WAZa1IAH with EmailMessage 02sAs000007HOGPIA4 logged `ALOG-01299/01300` with `AI_Tool_Name__c = 'Email Resend Agent'` even though the agent that actually ran was `Email_Analysis_Agent v6`. File a maintenance ticket -- not blocking |
+| 10 | 2026-05-16 | `sf agent preview send --json --authoring-bundle <Name>` returns the agent's complete response, suitable for end-to-end functional testing | The CLI's `result.messages[]` payload only contains the FIRST post-transition LLMStep response. Multi-iteration reasoning loops (subagent action calls -> variable updates -> next LLMStep -> final summary) are NOT aggregated into the response payload. A trace where `prompt_response.tool_invocations: null` on the first subagent LLMStep does NOT mean the agent failed to call actions -- only that the CLI captured the response before subsequent iterations completed. **For end-to-end functional validation use:** (a) Agentforce Builder UI (Test panel), or (b) a real `Agent.generateAiAgentResponse` invocation from Apex, or (c) trigger an approved test path such as inserting a synthetic record and checking the async log after the queueable completes | Validated on <target-env-alias> 2026-05-16 when CLI `preview send --authoring-bundle Example_Agent` reported empty agent responses for live tests, but Builder UI test + real platform invocation both succeeded end-to-end. Use the right test surface for the right phase: CLI for session-debugging individual steps, Builder UI / platform path for functional verification |
+| 11 | 2026-05-16 | `Agent_Activity_Log__c.AI_Tool_Name__c` reflects the active agent in use | The trigger path (`ExampleInboundOrchestrator.invokeAndDecide`) and external callout queueable (`ExternalCalloutQueueable.buildLog`) hardcoded an old example label as `AI_Tool_Name__c`. After an agent cutover, logs still showed the old label, which was misleading for reporting and observability. The actual agent invoked came from `ExampleAgentConfiguration.getConfig().agentApiName`, but the log label did not track the cutover. **Recommendation:** refactor to read the label from configuration (for example, add an `agentLogLabel` field) or derive from `agentApiName` at log-write time | Observed during end-to-end cutover verification with placeholder records (`<case-id>`, `<email-message-id>`, `<log-record-name>`). File a maintenance ticket -- not blocking |
 
 ---
 

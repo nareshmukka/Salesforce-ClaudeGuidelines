@@ -504,7 +504,7 @@ User -> PSG_<AgentName>_User
          """" (optional) PS for data access the actions need
 ```
 
-PS naming: `<AgentName>_Access` (e.g. `Email_Analysis_Agent_Access`). Mirror every `apex://`, `flow://`, `prompt://` target in the `.agent` file.
+PS naming: `<AgentName>_Access` (e.g. `Example_Agent_Access`). Mirror every `apex://`, `flow://`, `prompt://` target in the `.agent` file.
 
 ### 8.2 `AgentforceServiceAgent`
 

@@ -35,21 +35,22 @@ $docsToCheck = @(
 
 $errors = New-Object System.Collections.Generic.List[string]
 $encodingArtifactPattern = [string]::Concat("([", [char]0x00E2, [char]0x00C2, [char]0xFFFD, "])")
+# Only placeholder examples are allowed here; never add real client, person, org, environment, brand, or project names to this public validation script.
 $forbiddenPortableTerms = @(
-    "Plusgrade",
-    "PlusGrade",
-    "PlusGradeFullSB",
-    "FullSB",
-    "Naresh",
-    "sandbox",
-    "United",
-    "JetBlue",
-    "Air Canada",
-    "Lufthansa",
-    "Hilton",
-    "Hyatt",
-    "IHG",
-    "manifest/package-case-flow-optimization.xml"
+    "ExampleClientName",
+    "ExampleCompanyName",
+    "ExampleCustomerName",
+    "ExamplePersonName",
+    "ExampleEnvironmentAlias",
+    "ExampleSandboxAlias",
+    "ExampleOrgAlias",
+    "ExamplePartnerName",
+    "ExampleBrandName",
+    "ExampleAirlineName",
+    "ExampleHotelBrandName",
+    "ExampleProjectName",
+    "ExampleProcessName",
+    "manifest/package-client-specific-example.xml"
 )
 
 function Add-Error {

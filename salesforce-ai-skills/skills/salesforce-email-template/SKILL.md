@@ -94,7 +94,7 @@ Choose Lightning templates for modern use cases; maintain Classic only where req
 
 # Email Template Guidelines
 
-Authoritative reference for `EmailTemplate` metadata in this project. Covers the metadata XML shape, the five template types, merge-field anatomy, folder placement, attachments, branding, Apex-side rendering (`Messaging.renderStoredEmailTemplate`), and the agent-side `GetEmailTemplateAction` pattern used by `Email_Template_Drafting` in the `Email_Analysis_Agent` bundle.
+Authoritative reference for `EmailTemplate` metadata in this project. Covers the metadata XML shape, the five template types, merge-field anatomy, folder placement, attachments, branding, Apex-side rendering (`Messaging.renderStoredEmailTemplate`), and the agent-side `GetEmailTemplateAction` pattern used by `Example_Template_Drafting` in the `Example_Agent` bundle.
 
 **Verified against:** [EmailTemplate Metadata API reference](https://developer.salesforce.com/docs/atlas.en-us.api_meta.meta/api_meta/meta_emailtemplate.htm) - [Messaging.SingleEmailMessage Apex reference](https://developer.salesforce.com/docs/atlas.en-us.apexref.meta/apexref/apex_class_Messaging_SingleEmailMessage.htm) - [Outbound Email from Apex](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_email_outbound_messaging.htm). Last verified 2026-05-16.
 
@@ -347,7 +347,7 @@ Always `UTF-8` for new work -- supports the full Unicode range our customers use
 
 ## 8. Agent-Side Usage -- `GetEmailTemplateAction` Pattern
 
-The `Email_Analysis_Agent` bundle (`Email_Template_Drafting` subagent) uses an Apex invocable that wraps `Messaging.renderStoredEmailTemplate` to return a fully-resolved draft to the LLM for refinement. This is the canonical pattern for any agent that drafts replies from templates.
+The `Example_Agent` bundle (`Example_Template_Drafting` subagent) uses an Apex invocable that wraps `Messaging.renderStoredEmailTemplate` to return a fully-resolved draft to the LLM for refinement. This is the canonical pattern for any agent that drafts replies from templates.
 
 ### Apex invocable contract
 

@@ -731,7 +731,7 @@ grep logPrivateConversationData force-app/main/default/bots/<Dev_Name>/<Dev_Name
  *
  *  Usage:
  *    <AgentName>TestInvoker.runAll();
- *    <AgentName>TestInvoker.runOne('T01_HappyPath', '500xx00000ABCDE', '02sxx00000FGHIJ');
+ *    <AgentName>TestInvoker.runOne('T01_HappyPath', '<case-id>', '<email-message-id>');
  */
 public with sharing class <AgentName>TestInvoker {
 

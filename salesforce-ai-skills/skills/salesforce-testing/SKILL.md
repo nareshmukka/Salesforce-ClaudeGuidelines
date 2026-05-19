@@ -639,7 +639,7 @@ Traces land at `.sfdx/agents/<BundleName>/sessions/<sessionId>/traces/<planId>.j
 # tests/MyAgent-testing-center.yaml
 name: "Email Analysis Smoke"
 subjectType: AGENT
-subjectName: Email_Analysis_Agent
+subjectName: Example_Agent
 testCases:
   - utterance: "Analyze this inbound support email"
     expectedTopic: structured_analysis

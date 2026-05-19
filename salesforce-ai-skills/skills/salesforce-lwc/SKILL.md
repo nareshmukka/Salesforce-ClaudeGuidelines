@@ -681,8 +681,8 @@ import { registerApexTestWireAdapter } from '@salesforce/sfdx-lwc-jest';
 
 const getCasesAdapter = registerApexTestWireAdapter(getCases);
 const MOCK = [
-    { Id: '5001000000AAAA1', Subject: 'Test 1', Status: 'New',    Priority: 'High' },
-    { Id: '5001000000AAAA2', Subject: 'Test 2', Status: 'Closed', Priority: 'Low'  }
+    { Id: '<case-id-1>', Subject: 'Test 1', Status: 'New',    Priority: 'High' },
+    { Id: '<case-id-2>', Subject: 'Test 2', Status: 'Closed', Priority: 'Low'  }
 ];
 
 describe('c-case-dashboard-container', () => {
