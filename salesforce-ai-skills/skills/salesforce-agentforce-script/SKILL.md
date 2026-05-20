@@ -9,7 +9,7 @@ compatibility:
   - GitHub Copilot
 metadata:
   version: 2.0.0
-  last_updated: 2026-05-16
+  last_updated: 2026-05-20
   owner: Reusable Salesforce AI Skills Library
 ---
 
@@ -54,6 +54,9 @@ Define concise system policy, clear topic/subagent boundaries, and explicit acti
 - Always use `sf` agent commands with `--json`; confirm target environment before org interaction.
 - Diagnose behavior with live preview and traces before editing: validate, preview with live actions, send representative utterances, then inspect routing, action availability, action I/O, and reasoning.
 - Publish is not validation and creates a permanent version. Do not publish or activate until compile validation, live preview, trace review, and explicit user approval are complete.
+- Treat Agent Spec approval as a hard gate for meaningful new-agent or major-change work. Capture subagents, actions, variables, routing, backing logic, safety gates, test plan, and any knowledge-grounding requirements before editing.
+- For document-grounded agents, capture the source corpus path during requirements/spec work, provision Agentforce Data Library early, wire `knowledge:` and the `AnswerQuestionsWithKnowledge` action deliberately, and wait for a non-null retriever before grounded preview tests.
+- Include an LLM-driven safety review across identity/transparency, user safety, data/privacy, content safety, fairness, deception/manipulation, and scope/boundaries before publish.
 - Common syntax guardrails: 4-space indentation, no tabs, capitalized booleans, double-quoted strings, no `else if`, no `instructions:` wrapper under `after_reasoning`, and treat `@inputs`/`@outputs` as short-lived action-scope values.
 - Prefer architecture patterns from the recipe catalog: hub-and-spoke routing, verification gates before protected work, post-action loops, and safety confirmation gates for write/send actions.
 

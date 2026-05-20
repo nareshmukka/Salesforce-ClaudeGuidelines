@@ -41,7 +41,7 @@ Claude, Codex, and Amazon Q should use this index for task-specific skill select
 | `salesforce-lwc` | Production Salesforce AI skill for Lightning Web Component implementation/review/testing. | [`SKILL.md`](skills/salesforce-lwc/SKILL.md) |
 | `salesforce-media-search` | Production Salesforce AI skill for searching, selecting, and attributing Salesforce-relevant images/media for docs, demos, UI mockups, and enablement content. | [`SKILL.md`](skills/salesforce-media-search/SKILL.md) |
 | `salesforce-metadata` | Production Salesforce AI skill for Objects/fields/record types/validation/CMDT changes. | [`SKILL.md`](skills/salesforce-metadata/SKILL.md) |
-| `salesforce-observability` | Production Salesforce AI skill for Logging, telemetry, monitoring, incident triage. | [`SKILL.md`](skills/salesforce-observability/SKILL.md) |
+| `salesforce-observability` | Production Salesforce AI skill for Logging, telemetry, monitoring, incident triage, Agentforce session traces, STDM/Data Cloud observability, and production agent behavior analysis. | [`SKILL.md`](skills/salesforce-observability/SKILL.md) |
 | `salesforce-omnistudio` | Production Salesforce AI skill for OmniStudio OmniScripts, FlexCards, DataMappers/DataRaptors, Integration Procedures, EPC modeling, dependencies, and DataPack deployment. | [`SKILL.md`](skills/salesforce-omnistudio/SKILL.md) |
 | `salesforce-permissions` | Production Salesforce AI skill for Access model, permission sets/groups, muting, external auth access. | [`SKILL.md`](skills/salesforce-permissions/SKILL.md) |
 | `salesforce-prompt-template` | Production Salesforce AI skill for Prompt Builder templates, AI output contracts, grounding controls. | [`SKILL.md`](skills/salesforce-prompt-template/SKILL.md) |

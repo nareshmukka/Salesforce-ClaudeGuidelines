@@ -9,7 +9,7 @@ compatibility:
   - GitHub Copilot
 metadata:
   version: 2.0.0
-  last_updated: 2026-05-16
+  last_updated: 2026-05-20
   owner: Reusable Salesforce AI Skills Library
 ---
 
@@ -53,6 +53,8 @@ Agent Script is block-based: system, config, variables, language, connection, su
 - For new agents, stop after Agent Spec drafting until the user approves the spec. The spec should identify subagents, actions, backing logic, variables, routing, safety gates, and required org setup.
 - Scan existing project metadata before inventing actions: invocable Apex, autolaunched Flows, prompt templates, objects, and fields may already provide backing logic.
 - Validate in this order: environment prerequisites, authoring-bundle compile, backing-logic deploy, live preview with `--use-live-actions`, trace analysis, then publish/activate only after explicit approval.
+- For document/FAQ/policy agents, capture knowledge-grounding requirements in the Agent Spec, provision Agentforce Data Library early, compute and wire the `rag_feature_config_id`, and do not test grounded answers until the library has a retriever and the agent user has Data Cloud access.
+- Treat safety as part of every lifecycle phase: pre-authoring spec review, pre-publish gate, adversarial test probes, and trace review after production behavior changes.
 - Service agents require careful default agent user and permission validation. Employee agents must not be configured like service/messaging agents.
 - For behavior issues, traces are the source of truth; preview text alone is not enough to diagnose routing/action problems.
 - Agent Script Recipes provide progressive examples: language essentials, action configuration, reasoning mechanics, and architectural patterns. Use them as pattern references, not as copy-paste output.
