@@ -6,11 +6,12 @@ Cross-skill lessons that every agent should check before editing. Skill-specific
 
 Every Claude, Codex, or VS Code Copilot agent should read:
 
-1. `CLAUDE.md` or `CODEX.md`
-2. `salesforce-ai-skills/SKILL_INDEX.md`
-3. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`
-4. Task-specific `SKILL.md` files
-5. This `LESSONS.md`
+1. `AGENTS.md`
+2. The relevant tool wrapper when applicable: `CLAUDE.md`, `CODEX.md`, or `AMAZONQ.md`
+3. `salesforce-ai-skills/SKILL_INDEX.md`
+4. `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md` for Salesforce implementation/review/design work
+5. Task-specific `SKILL.md` files
+6. This `LESSONS.md`
 
 ## Common Mistakes To Avoid
 

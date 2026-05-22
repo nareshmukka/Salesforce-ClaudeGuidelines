@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 $repo = Resolve-Path $Root
 $skillsRoot = Join-Path $repo "salesforce-ai-skills\skills"
 $docsToCheck = @(
+    "AGENTS.md",
     "README.md",
     "CODEX.md",
     "CLAUDE.md",
@@ -130,6 +131,34 @@ foreach ($doc in $docsToCheck) {
     }
 }
 
+$agentsPath = Join-Path $repo "AGENTS.md"
+if (Test-Path $agentsPath) {
+    $agentsText = Get-Content -Raw -LiteralPath $agentsPath
+    foreach ($required in @("public Salesforce AI skills template", "Do not read all skills by default", "Safety gates", "Output contract")) {
+        if ($agentsText -notmatch [regex]::Escape($required)) {
+            Add-Error "AGENTS.md missing required public contract text: $required"
+        }
+    }
+}
+
+$readmePath = Join-Path $repo "README.md"
+if (Test-Path $readmePath) {
+    $readmeText = Get-Content -Raw -LiteralPath $readmePath
+    if ($readmeText -notmatch [regex]::Escape("AGENTS.md")) {
+        Add-Error "README.md must reference AGENTS.md."
+    }
+}
+
+foreach ($wrapper in @("CLAUDE.md", "CODEX.md")) {
+    $path = Join-Path $repo $wrapper
+    if (Test-Path $path) {
+        $text = Get-Content -Raw -LiteralPath $path
+        if ($text -notmatch [regex]::Escape("AGENTS.md")) {
+            Add-Error "$wrapper should reference AGENTS.md."
+        }
+    }
+}
+
 foreach ($removedDoc in @("salesforce-ai-skills\README.md", "salesforce-ai-skills\CLAUDE.md")) {
     if (Test-Path (Join-Path $repo $removedDoc)) {
         Add-Error "Duplicate nested documentation file should not exist: $removedDoc"
@@ -224,6 +253,7 @@ if (Test-Path $skillsRoot) {
 }
 
 $referenceChecks = @(
+    @{ Path = "README.md"; Text = "AGENTS.md" },
     @{ Path = "README.md"; Text = "TEAM_OPERATING_MODEL.md" },
     @{ Path = "README.md"; Text = "AMAZONQ.md" },
     @{ Path = "CODEX.md"; Text = "CODEX_AGENT_TEAM_PLAYBOOK.md" },

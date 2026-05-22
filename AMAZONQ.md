@@ -3,6 +3,8 @@
 ## Purpose
 Default operating contract for Amazon Q Developer in this reusable Salesforce AI-guidelines repository.
 
+Read `AGENTS.md` first. It is the shared public contract for loading order, portability, safety gates, agent-team use, and final response expectations.
+
 ## How Amazon Q is configured
 Amazon Q uses `.amazonq/rules/` as the project rules location. This setup does not use static repo-managed Amazon Q agents.
 
@@ -10,7 +12,10 @@ Shared Salesforce skills are under `salesforce-ai-skills/skills/`. Shared operat
 
 Use `salesforce-ai-skills/agent-teams/AMAZONQ_PLAYBOOK.md` for the full prompt catalog. Use `salesforce-ai-skills/agent-teams/templates/context-packet.md` for non-trivial work.
 
+Use `salesforce-ai-skills/SKILL_INDEX.md` to select relevant skills. Do not load all skills by default.
+
 ## Safety gates
+- Follow `AGENTS.md` as the shared safety and portability contract.
 - Do not deploy without explicit approval.
 - Do not publish or activate Agentforce agents without explicit approval.
 - Do not activate Flow changes without explicit approval.

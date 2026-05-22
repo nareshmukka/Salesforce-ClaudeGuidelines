@@ -1,6 +1,6 @@
 ﻿---
 name: salesforce-observability
-description: Production Salesforce AI skill for Logging, telemetry, monitoring, incident triage.
+description: Production Salesforce AI skill for Logging, telemetry, monitoring, incident triage, Agentforce session traces, STDM/Data Cloud observability, and production agent behavior analysis.
 license: Apache-2.0
 compatibility:
   - Claude Code
@@ -9,12 +9,12 @@ compatibility:
   - GitHub Copilot
 metadata:
   version: 2.0.0
-  last_updated: 2026-05-16
+  last_updated: 2026-05-20
   owner: Reusable Salesforce AI Skills Library
 ---
 
 ## TRIGGER when
-- The task involves Logging, telemetry, monitoring, incident triage.
+- The task involves Logging, telemetry, monitoring, incident triage, Agentforce production session analysis, STDM session trace data, Data Cloud trace records, agent quality metrics, or production agent regressions.
 - The user asks for implementation, refactor, troubleshooting, review, or best-practice validation in this area.
 - The assistant must produce Salesforce-safe code/metadata with explicit security/testing notes.
 
@@ -47,6 +47,50 @@ Provide independently usable, production-ready assistant guidance for this Sales
 
 ## Salesforce best practices
 Generate/request correlation ID per transaction. Classify errors (validation/integration/platform/business). Keep logs PII-safe and redact sensitive values. Track retry attempts and final disposition.
+
+## Agentforce ADLC observability
+Use the Agentforce ADLC observe/reproduce/improve loop for published or production-like agents:
+
+1. **Observe**: Query production session evidence from Data Cloud STDM when available; otherwise fall back to Testing Center runs plus local preview traces.
+2. **Reproduce**: Convert each confirmed production issue into a preview scenario and run it repeatedly with local traces.
+3. **Improve**: Apply minimal `.agent` edits, validate, test adjacent paths, and only publish/activate after explicit approval.
+
+Gather these inputs before starting: org alias, agent display/API name, optional `.agent` file path, optional session IDs, and lookback window (default 7 days).
+
+### Agent name resolution
+Before STDM queries, resolve the user-provided name against the org:
+
+```bash
+sf data query --json --query "SELECT Id, MasterLabel, DeveloperName FROM GenAiPlannerDefinition WHERE MasterLabel LIKE '%<name>%' OR DeveloperName LIKE '%<name>%'" -o <org>
+```
+
+Use `MasterLabel` for STDM session filters. Use `DeveloperName` without a trailing `_vN` suffix for `sf agent` CLI commands.
+
+### Data Space and STDM checks
+- Discover active Data Cloud data spaces with `sf api request rest "/services/data/vXX.X/ssot/data-spaces" -o <org>`. This beta command may not accept `--json`; read the returned JSON-like payload directly.
+- If exactly one active data space exists, use it and state the assumption. If multiple active spaces exist, ask the user which one to use.
+- Check whether STDM DMOs are available before querying session traces. If STDM is absent, tell the user and switch to the fallback path: existing test suites plus `sf agent preview --authoring-bundle` local traces.
+
+### Fallback path when STDM is unavailable
+1. Run any existing test suite with `sf agent test run --json --api-name <Suite> --wait 10 --result-format json -o <org>`.
+2. If no suite exists, derive utterances from subagents, actions, guardrails, safety probes, and multi-turn transitions.
+3. Run preview with `--authoring-bundle` to create local traces under `.sfdx/agents/<BundleName>/sessions/<SessionId>/traces/`.
+4. Diagnose from trace evidence, not preview text alone.
+
+### Issue classification
+Prioritize issues as:
+- P1: action errors, wrong subagent routing, LOW adherence/safety, prompt leakage, injection compliance.
+- P2: missing actions, variable capture bugs, knowledge gaps, permission blockers, grounding failures.
+- P3: slow actions, abandoned sessions, dead subagents, noisy logs, minor response-quality drift.
+
+Classify root causes as agent config, instructions, action contract, permissions, data/knowledge availability, backing logic, platform limitation, or test/data defect.
+
+### Reproduce and improve
+- Build one reproduction scenario per confirmed issue and run it three times. Mark `[CONFIRMED]` for 3/3 failures, `[INTERMITTENT]` for 1-2/3 failures, and `[NOT REPRODUCED]` for 0/3 failures.
+- Only confirmed or intermittent issues should move to `.agent` edits.
+- Before editing, establish baseline traces. After each edit, validate, preview the changed path, then test adjacent paths.
+- Create or update Testing Center regression cases for confirmed production issues.
+- Re-run safety review after behavior edits and block publish if the change introduces unsafe behavior.
 
 ## Examples
 ### Good example patterns

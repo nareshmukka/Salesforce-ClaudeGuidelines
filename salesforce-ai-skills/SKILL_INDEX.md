@@ -6,12 +6,13 @@ Claude, Codex, and Amazon Q should use this index for task-specific skill select
 
 ## Execution Rule
 
-1. Read `salesforce-global-development/SKILL.md` first.
-2. Read `../LESSONS.md` from the repository root for cross-skill mistake prevention.
-3. Select every task-specific skill that applies.
-4. Read each selected `SKILL.md` before inspecting or editing implementation files.
-5. Do not deploy, publish, activate, load/export live data, rotate auth, or run destructive changes without explicit approval.
-6. Record validation, security review, deployment notes, and rollback notes in the final response.
+1. Read root `AGENTS.md` and the relevant tool wrapper before using this index.
+2. Read `salesforce-global-development/SKILL.md` for Salesforce implementation/review/design tasks.
+3. Read `../LESSONS.md` from the repository root for implementation/review work or reusable guidance updates.
+4. Select every task-specific skill that applies.
+5. Read each selected `SKILL.md` before inspecting or editing implementation files.
+6. Do not deploy, publish, activate, load/export live data, rotate auth, or run destructive changes without explicit approval.
+7. Record validation, security review, deployment notes, and rollback notes in the final response.
 
 ## Inventory
 
@@ -41,7 +42,7 @@ Claude, Codex, and Amazon Q should use this index for task-specific skill select
 | `salesforce-lwc` | Production Salesforce AI skill for Lightning Web Component implementation/review/testing. | [`SKILL.md`](skills/salesforce-lwc/SKILL.md) |
 | `salesforce-media-search` | Production Salesforce AI skill for searching, selecting, and attributing Salesforce-relevant images/media for docs, demos, UI mockups, and enablement content. | [`SKILL.md`](skills/salesforce-media-search/SKILL.md) |
 | `salesforce-metadata` | Production Salesforce AI skill for Objects/fields/record types/validation/CMDT changes. | [`SKILL.md`](skills/salesforce-metadata/SKILL.md) |
-| `salesforce-observability` | Production Salesforce AI skill for Logging, telemetry, monitoring, incident triage. | [`SKILL.md`](skills/salesforce-observability/SKILL.md) |
+| `salesforce-observability` | Production Salesforce AI skill for Logging, telemetry, monitoring, incident triage, Agentforce session traces, STDM/Data Cloud observability, and production agent behavior analysis. | [`SKILL.md`](skills/salesforce-observability/SKILL.md) |
 | `salesforce-omnistudio` | Production Salesforce AI skill for OmniStudio OmniScripts, FlexCards, DataMappers/DataRaptors, Integration Procedures, EPC modeling, dependencies, and DataPack deployment. | [`SKILL.md`](skills/salesforce-omnistudio/SKILL.md) |
 | `salesforce-permissions` | Production Salesforce AI skill for Access model, permission sets/groups, muting, external auth access. | [`SKILL.md`](skills/salesforce-permissions/SKILL.md) |
 | `salesforce-prompt-template` | Production Salesforce AI skill for Prompt Builder templates, AI output contracts, grounding controls. | [`SKILL.md`](skills/salesforce-prompt-template/SKILL.md) |
@@ -53,8 +54,10 @@ Claude, Codex, and Amazon Q should use this index for task-specific skill select
 | `salesforce-validation-rules` | Production Salesforce AI skill for Salesforce validation rule design, formulas, error messages, bypass strategy, and deployment review. | [`SKILL.md`](skills/salesforce-validation-rules/SKILL.md) |
 | `salesforce-visualforce` | Production Salesforce AI skill for Visualforce page/controller maintenance or migration. | [`SKILL.md`](skills/salesforce-visualforce/SKILL.md) |
 
-## Coverage Rating
+## Maturity And Readiness
 
-Current rating: **10/10 for local agent execution readiness**.
+Current maturity: **Advanced reusable template**.
 
-Why: the library has broad practical domain coverage, a single-file skill contract per domain, explicit routing in Claude/Codex/VS Code docs, safety gates, lesson routing, portability checks, and an automated validator.
+Current readiness: **Strong for local agent-assisted Salesforce review, implementation planning, and guided development.**
+
+Known limitation: Every consuming project must validate these skills against its Salesforce release, org metadata, security model, installed packages, CI/CD process, and chosen AI tool runtime.

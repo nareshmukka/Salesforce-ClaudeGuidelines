@@ -9,7 +9,7 @@ compatibility:
   - GitHub Copilot
 metadata:
   version: 2.0.0
-  last_updated: 2026-05-16
+  last_updated: 2026-05-20
   owner: Reusable Salesforce AI Skills Library
 ---
 
@@ -54,6 +54,8 @@ Differentiate Builder metadata orchestration from Script behavior definitions. K
 - Keep Builder topics, actions, prompt templates, and permission personas mapped explicitly so deployment and access troubleshooting are not guesswork.
 - Validate action targets and prompt template contracts before publish. Builder UI success does not replace source review or live preview.
 - For ServicePlanner or project-specific Service Assistant work, route to the Service Assistant skill before applying EmployeeAgent assumptions.
+- When Builder work touches an authoring-bundle agent, align with the ADLC pipeline: Agent Spec approval, backing-logic discovery, safety review, compile validation, live preview with traces, Testing Center coverage, and explicit publish/activate approval.
+- If a Builder-created or Builder-edited agent answers from documents, verify the matching `.agent` source has the intended `knowledge:` block, ADL/RAG feature config wiring, and agent-user Data Cloud access before treating preview behavior as valid.
 
 ## Examples
 ### Good example patterns
