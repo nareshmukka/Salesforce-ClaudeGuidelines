@@ -3,6 +3,7 @@
 Salesforce development and Agentforce guidance organized as reusable AI skill packages.
 
 Start with:
+- `AGENTS.md` for shared cross-tool behavior.
 - `CODEX.md` for Codex / ChatGPT inline chat usage.
 - `CLAUDE.md` for Claude Code / Claude Agents usage.
 - `AMAZONQ.md` for Amazon Q Developer usage.
@@ -10,11 +11,13 @@ Start with:
 - `LESSONS.md` for reusable mistake-prevention rules.
 - `.vscode/settings.json` for VS Code Copilot skill/agent discovery.
 
+This repo is a reusable public Salesforce AI skills template. Keep project/client/org-specific facts outside shared files.
+
 ## Skill Coverage
 
 The local library now uses one self-contained `SKILL.md` per folder under `salesforce-ai-skills/skills/`.
 
-There is one root `README.md`, one root `CLAUDE.md`, and one root `CODEX.md`. The skill library itself contains only `SKILL_INDEX.md` plus the `skills/` folders, so agents do not have competing entry points.
+There is one root `AGENTS.md`, one root `README.md`, and one root wrapper for each supported tool: `CLAUDE.md`, `CODEX.md`, and `AMAZONQ.md`. The skill library itself contains only `SKILL_INDEX.md` plus the `skills/` folders, so agents do not have competing entry points.
 
 VS Code Copilot discovers these skills through `.vscode/settings.json`, which adds `salesforce-ai-skills/skills` to `chat.agentSkillsLocations`. Without that setting, VS Code only scans default folders like `.github/skills`, `.claude/skills`, and `.agents/skills`.
 
@@ -31,14 +34,15 @@ Major covered domains:
 
 Every agent should follow this order:
 
-1. Read `CLAUDE.md` or `CODEX.md`.
-2. Read `salesforce-ai-skills/SKILL_INDEX.md`.
-3. Read `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`.
-4. Read `LESSONS.md`.
-5. Read every task-specific `SKILL.md` needed for the request.
-6. Inspect source files before edits.
-7. Make the smallest safe change.
-8. Validate and report security, tests, deployment notes, and rollback notes.
+1. Read `AGENTS.md`.
+2. Read the relevant tool wrapper when applicable: `CLAUDE.md`, `CODEX.md`, or `AMAZONQ.md`.
+3. Read `salesforce-ai-skills/SKILL_INDEX.md`.
+4. Read `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md` only for Salesforce implementation/review/design tasks.
+5. Read `LESSONS.md` when doing implementation/review work or reusable guidance updates.
+6. Read only task-specific `SKILL.md` files needed for the request.
+7. Inspect source files before edits.
+8. Make the smallest safe change.
+9. Validate and report security, tests, deployment notes, and rollback notes.
 
 ## Agent Pipelines
 
@@ -70,6 +74,7 @@ This repo supports Claude, Codex, and Amazon Q Developer.
 - Use the full pipeline only for non-trivial or high-risk work.
 
 References:
+- [AGENTS.md](AGENTS.md)
 - [CLAUDE.md](CLAUDE.md)
 - [CODEX.md](CODEX.md)
 - [AMAZONQ.md](AMAZONQ.md)

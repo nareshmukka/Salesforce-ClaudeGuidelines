@@ -4,18 +4,20 @@
 Default operating contract for Codex/ChatGPT inline chat in this repository.
 
 ## Startup checklist
-1. Read this file.
-2. Read `salesforce-ai-skills/SKILL_INDEX.md`.
-3. Read `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`.
-4. Read `LESSONS.md`.
-5. Read task skill(s) from `salesforce-ai-skills/skills/<skill-name>/SKILL.md`.
-6. Inspect source files before proposing edits.
-7. Make smallest safe local change.
-8. Validate locally.
-9. Summarize security/testing/rollback.
+1. Read `AGENTS.md` for the shared cross-tool public contract.
+2. Read this Codex wrapper.
+3. Read `salesforce-ai-skills/SKILL_INDEX.md`.
+4. For Salesforce implementation/review/design tasks, read `salesforce-ai-skills/skills/salesforce-global-development/SKILL.md`.
+5. Read only task-specific skill(s) from `salesforce-ai-skills/skills/<skill-name>/SKILL.md`.
+6. Read `LESSONS.md` for implementation/review work or reusable guidance updates.
+7. Inspect source files before proposing edits.
+8. Make the smallest safe local change, validate locally, and summarize security/testing/rollback.
+
+Do not read all skills by default.
 
 ## Portability rules
-- Do not add company names, person names, target environment aliases, instance URLs, record IDs, secrets, or customer-specific process names to shared skills or agents.
+- Follow `AGENTS.md` as the shared portability contract.
+- Do not add company names, client names, person names, target environment aliases, instance URLs, record IDs, secrets, or customer-specific process names to shared skills or agents.
 - Use placeholders such as `<target-env-alias>`, `<manifest-path>`, `<agent-api-name>`, and `<object-api-name>` in reusable examples.
 - Put project-specific details in local working notes or implementation files, not in reusable agent/skill instructions.
 
@@ -57,6 +59,7 @@ If skills do not appear, run `Chat: Open Customizations`, open the Skills tab, o
 - Media search: `salesforce-ai-skills/skills/salesforce-media-search/SKILL.md`
 
 ## Non-negotiable safety rules
+- Follow the safety gates in `AGENTS.md`.
 - Do not deploy unless explicitly asked.
 - Do not publish/activate Agentforce agents unless explicitly approved.
 - Ask before destructive changes.

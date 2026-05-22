@@ -103,27 +103,27 @@ No deploy/publish/activate/destructive changes without explicit user approval.
 
 # Global AI Development Guidelines -- Master Skill File
 
-**The constitution for AI-assisted Salesforce development on this team. Every other skill file in this library inherits from and extends this one. Attach this file to every agent session that touches Salesforce metadata, code, or configuration.**
+**The constitution for AI-assisted Salesforce development with this reusable template. Every other skill file in this library inherits from and extends this one. Attach this file to agent sessions that touch Salesforce metadata, code, or configuration.**
 
 **Verified against:** [Apex Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/) - [Apex Security and Sharing](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_security_sharing_chapter.htm) - [Set an Access Mode for Database Operations](https://developer.salesforce.com/docs/atlas.en-us.apexcode.meta/apexcode/apex_classes_enforce_usermode.htm) - [Write Simplified and Secure Apex with Spring '23 Updates](https://developer.salesforce.com/blogs/2023/05/write-simplified-and-secure-apex-with-spring-23-updates) - [Apex Enterprise Patterns -- Service Layer (Trailhead)](https://trailhead.salesforce.com/content/learn/modules/apex_patterns_sl) - [Apex Enterprise Patterns -- Domain & Selector Layers (Trailhead)](https://trailhead.salesforce.com/content/learn/modules/apex_patterns_dsl) - [Salesforce Governor Limits Cheat Sheet](https://developer.salesforce.com/docs/atlas.en-us.salesforce_app_limits_cheatsheet.meta/salesforce_app_limits_cheatsheet/) - [Named Credentials](https://help.salesforce.com/s/articleView?id=sf.named_credentials_about.htm) - [Flow Trigger Order of Execution](https://help.salesforce.com/s/articleView?id=sf.flow_concepts_trigger_order_of_execution.htm). Last verified 2026-05-16.
 
-> **Project context lives in [CLAUDE.md](../CLAUDE.md).** Target environment alias, manifest, current-API-version, agentic-pipeline lifecycle, lesson-routing table, project-specific flow inventory. This skill file is the **technical** constitution; CLAUDE.md is the **behavioral** contract. Read both at session start.
+> **Shared agent context starts in root `AGENTS.md`.** Consuming-project values such as target environment alias, manifest path, active API version, release process, and metadata inventory must come from the consuming project or user-provided context. This skill file is the technical Salesforce contract, not a project configuration file.
 
 ---
 
 ## 1. Identity & Authoring Convention
 
-Every artifact this team produces is owned by one author and carries a consistent header.
+Every consuming project should define its own authoring convention and apply it consistently.
 
-| Field | Value | Source |
+| Field | Placeholder / example | Source |
 |---|---|---|
-| Author | `the release owner` | `project configuration -> author` |
-| Title | `Salesforce Developer` | `project configuration -> title` |
-| Target environment alias | `<target-env-alias>` | `project configuration -> environmentAlias` |
-| Manifest | `manifest/package.xml` | `project configuration -> manifest` |
-| Current API version | `66.0` (Spring '26) | `project configuration -> currentApiVersion` |
+| Author | `<author-or-team>` | consuming project convention |
+| Title | `<role-or-title>` | consuming project convention |
+| Target environment alias | `<target-env-alias>` | consuming project configuration |
+| Manifest | `<manifest-path>` (example: `manifest/package.xml`) | consuming project configuration |
+| Current API version | `<current-api-version>` (example: `66.0`; consuming projects must confirm their active API version) | consuming project configuration |
 
-**Hard rule:** never hardcode these values in a skill file, command prompt, or generated artifact. Read `project configuration` at session start and use those values. When a new release bumps the API version, bump it in `project configuration` only.
+**Hard rule:** never hardcode consuming-project values in this reusable skill file, command prompt, or shared agent definition. Read them from the consuming project or ask the user.
 
 ### 1.1 Standard Apex Doc-Block Header
 
@@ -132,22 +132,22 @@ Every new Apex class -- service, selector, handler, trigger, batch, queueable, s
 ```apex
 /**
  * @description  <One-line purpose. What this class does and which layer it belongs to.>
- * @author       the release owner | Salesforce Developer
+ * @author       <author-or-team> | <role-or-title>
  * @created      YYYY-MM-DD
  * @lastModified YYYY-MM-DD
  * @layer        Entry | Application | Domain | Infrastructure
  * @sharing      with sharing | without sharing | inherited sharing  (must match class declaration)
  *
  * Change log:
- *  - YYYY-MM-DD  the release owner  Initial version.
- *  - YYYY-MM-DD  the release owner  <change summary>.
+ *  - YYYY-MM-DD  <author-or-team>  Initial version.
+ *  - YYYY-MM-DD  <author-or-team>  <change summary>.
  */
 public inherited sharing class CaseService {
    // ...
 }
 ```
 
-For LWC, Flow, and metadata XML the same five pieces of information go into the description / interview label / `<description>` element. Agentic-pipeline output never ships an artifact without authorship traceability.
+For LWC, Flow, and metadata XML, put the consuming project's required authorship and purpose details into the description / interview label / `<description>` element when that project requires it.
 
 ---
 
@@ -175,15 +175,15 @@ Each component area owns its own skill file. **This master file deliberately sta
 | Agentforce Builder metadata (Bot, BotVersion, GenAiPlannerBundle) | `../salesforce-agentforce-builder/SKILL.md` |
 | Agentforce `.agent` DSL -- authoring bundle, lifecycle | `../salesforce-agentforce-authoring-bundle/SKILL.md` |
 | Agent Script grammar reference (read-only canonical) | `../salesforce-agentforce-script/SKILL.md` |
-| Agentforce Service Assistant on Case (the target environment) | `../salesforce-service-assistant/SKILL.md` |
+| Agentforce Service Assistant on Case (consuming project's target environment) | `../salesforce-service-assistant/SKILL.md` |
 
-Multi-component task -> read every applicable file. Single-component task -> this file + the one matching file. Pure-question or clarification task -> CLAUDE.md only.
+Multi-component task -> read every applicable file. Single-component task -> this file + the one matching file. Pure-question or clarification task -> use `AGENTS.md` plus the relevant tool wrapper only.
 
 ---
 
 ## 3. Architecture Layering -- The Four-Layer Model
 
-Every implementation on this team conforms to a four-layer architecture grounded in the [Apex Enterprise Patterns](https://trailhead.salesforce.com/content/learn/modules/apex_patterns_sl). Knowing **where** code belongs is as important as writing it correctly.
+Every implementation using this template should follow a four-layer architecture grounded in the [Apex Enterprise Patterns](https://trailhead.salesforce.com/content/learn/modules/apex_patterns_sl), unless the consuming project documents a different architecture. Knowing **where** code belongs is as important as writing it correctly.
 
 ```
 "Œ""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
@@ -324,9 +324,9 @@ These are absolute. An agent that violates any of these has failed the task rega
 
 1. **No hardcoded org-specific IDs** -- record types, queues, profiles, users, groups, record IDs. Always look up at runtime via Schema methods or query by developer name. See Section 6 2. **No hardcoded endpoints, credentials, or secrets** -- every URL behind a Named Credential, every secret in External Credentials or platform credential stores. See Section 4 3.
 3. **No SOQL or DML inside loops** -- collect IDs first, query once, build a Map, iterate over the Map. See `../salesforce-apex/SKILL.md` for the canonical pattern.
-4. **No unilateral destructive operations** -- do not delete metadata, deactivate flows, drop permission sets, or remove fields without explicit user direction. The Salesforce delivery guidance project specifically forbids deactivating old flows and activating new flows (see [CLAUDE.md Section 3 CLAUDE.md)).
+4. **No unilateral destructive operations** -- do not delete metadata, deactivate flows, drop permission sets, remove fields, publish agents, activate automation, or run destructive changes without explicit user approval.
 5. **No silent scope expansion** -- if a change requires touching files outside the stated scope, pause and ask. Do not "helpfully" fix adjacent issues.
-6. **No bypass of the agentic pipeline gates** -- Architect -> Developer -> QA. QA findings block release; the developer iterates until QA passes, capped at `qaDevIterationCap` (currently 2) per `project configuration`.
+6. **No bypass of required review gates** -- use the smallest workflow that safely completes the task, and use Architect -> Developer -> QA style gates for non-trivial or high-risk work. QA findings block release until resolved or explicitly accepted.
 7. **No `@isTest(SeeAllData=true)` without a documented justification** -- test classes own their data. See `../salesforce-testing/SKILL.md`.
 8. **No `WITH SECURITY_ENFORCED` in new code** -- use `WITH USER_MODE`. See Section 4 2.
 9. **No missing sharing keyword on Apex classes** -- every class declares one. See Section 4 1.
@@ -435,7 +435,7 @@ A change is complete only when every applicable item is checked. This is the **u
 ### 8.1 Functional
 
 - [ ] All stated acceptance criteria are met.
-- [ ] Metadata compiles and validates in the target environment (test environment or scratch).
+- [ ] Metadata compiles and validates in the consuming project's target environment, test environment, or scratch org when applicable and approved.
 - [ ] Edge cases identified during planning are handled (nulls, empty collections, missing lookups).
 - [ ] Error paths return meaningful messages, not generic exceptions.
 - [ ] Backward compatibility maintained, or breaking changes explicitly documented.
@@ -467,24 +467,24 @@ A change is complete only when every applicable item is checked. This is the **u
 - [ ] All HTTP callouts mocked via `HttpCalloutMock`.
 - [ ] `@isTest(SeeAllData=false)` on every test class (exceptions documented and justified).
 - [ ] Test data created by a factory -- no dependency on existing org data.
-- [ ] Coverage >= 75% (Salesforce minimum); team target >= 85%.
+- [ ] Coverage >= 75% (Salesforce minimum); consuming projects may set a higher target.
 - [ ] LWC components have Jest unit tests for public API, user interactions, error states.
-- [ ] **Project exception:** Salesforce delivery guidance defers test classes per CLAUDE.md Section 3 `testsDefault: deferred`). Resume tests after test-environment functional testing.
+- [ ] Any test deferral is explicitly approved by the consuming project and documented with follow-up validation.
 
 ### 8.5 Release Readiness
 
 - [ ] Deployment order correct (see `../salesforce-deployment/SKILL.md`).
-- [ ] Validation deployment (check-only / dry-run) passed in target environment. Project default command:
+- [ ] Validation deployment (check-only / dry-run) passed in the consuming project's target environment when approved. Example command:
       ```bash
       sf project deploy start \
-        --manifest manifest/package.xml \
+        --manifest <manifest-path> \
         --target-org <target-env-alias> \
         --dry-run --test-level RunLocalTests --wait 60
       ```
 - [ ] Quick deploy used when applicable (within 10-day validation window).
 - [ ] Rollback plan documented -- exact steps to revert in production.
 - [ ] Destructive changes isolated in `destructiveChanges.xml` and explicitly approved.
-- [ ] **Project rules from CLAUDE.md Section 3 honored:** new flows deployed as `Draft` (not active); old flows not deactivated by the agent.
+- [ ] Flow activation/deactivation follows consuming-project release rules and is not performed by an agent without explicit approval.
 
 ---
 
@@ -500,10 +500,10 @@ Component-level anti-patterns (specific Apex / Flow / LWC mistakes) live in the 
 | Validate frequently -- after each significant change, not only at the end | When something breaks, the smaller the diff the easier the diagnosis. |
 | State scope explicitly at the start of every task | Anchors the agent and the human to the same boundaries. Re-anchor after any clarification. |
 | Pause when scope expands unexpectedly | "I noticed N also needs to change -- confirm before proceeding?" beats silent helpful fixes. |
-| Apply the rule from the skill file even if it conflicts with general best-practice training data | This library is project-tested. Generic best practice is not. |
+| Apply the rule from the skill file even if it conflicts with general best-practice training data | This library captures Salesforce-specific reusable practice. Generic best practice may be incomplete. |
 | Cite which section / rule was applied in the Security and Architecture summaries | Auditable. Prevents hallucinated compliance. |
-| Read CLAUDE.md and `project configuration` at session start | Project-specific rules and current values live there. Hardcoding from memory drifts. |
-| Use the agentic pipeline (`/sf-lead`) for any non-trivial change | Architect -> Developer -> QA gates catch what one-shot prompts miss. |
+| Read `AGENTS.md`, the relevant tool wrapper, and selected skills before implementation | Shared rules, tool-specific behavior, and current task constraints must be explicit. |
+| Use Lead / Architect / Dev / QA style workflow for non-trivial or high-risk changes | Review gates catch what one-shot prompts miss. |
 
 ### 9.2 DON'T -- Prohibited Process Practices
 
@@ -512,11 +512,11 @@ Component-level anti-patterns (specific Apex / Flow / LWC mistakes) live in the 
 | Writing a consolidation or refactor without reading the source XML/code in full first | Misses field-level details; gaps caught late in QA cost more than gaps caught at authoring |
 | Batching multiple changes before running a validation | Harder to identify which change introduced an error; longer debug cycles. Validate after every significant change. |
 | Silently fixing pre-existing bugs outside the task scope | Pollutes the diff; review can't trace the change to a ticket; risks regressions in unrelated areas |
-| Activating new flows or deactivating old flows (Salesforce delivery guidance) | Explicitly forbidden by CLAUDE.md Section 3 the release owner handles activation manually after test-environment validation |
-| Deploying without a dry-run | Production-impacting metadata changes must validate against the target environment first |
+| Activating new flows or deactivating old flows without approval | Automation activation changes live behavior and must be explicitly approved by the consuming project |
+| Deploying without a dry-run | Production-impacting metadata changes should validate against the consuming project's target environment first |
 | Quoting a Salesforce feature's minimum API version from memory or training data | Training data drifts. `WITH USER_MODE` is API 56.0 (Winter '23), not 50.0 or 51.0. Always cross-check developer.salesforce.com or the release blog before citing a version |
-| Bypassing the skill file because "I know how to do this" | The skill files encode project-specific patterns and lessons. They override training data. |
-| Treating CLAUDE.md or `project configuration` values as defaults that can be overridden | They are the single source of truth. Bump in config, never inline. |
+| Bypassing the skill file because "I know how to do this" | The skill files encode reusable Salesforce patterns and lessons. They override generic training data. |
+| Treating example placeholders as real project defaults | Consuming-project values must come from the consuming project or user-provided context, never from reusable examples. |
 | Skipping the `Plan / Files / Implementation / Security / Testing / Validation / Rollback` output sections | These sections make the work auditable. Skipping them shifts review burden onto the human. |
 | Producing a fix without proposing a rollback | Every production change must be reversible. |
 
@@ -540,7 +540,7 @@ Output sections in every response, in this order: **Plan - Files - Implementatio
 
 ## 11. Cross-Cutting Empirical Findings & Implementation Notes
 
-When a process-level finding emerges -- something about how Salesforce documentation, CLI tooling, or AI-agent behavior interacts with this project -- it goes here. Component-specific findings go to the matching skill file (see [CLAUDE.md Section 6 CLAUDE.md) routing table).
+When a process-level finding emerges -- something about how Salesforce documentation, CLI tooling, or AI-agent behavior interacts with this reusable template -- it goes here. Component-specific findings go to the matching skill file selected from `salesforce-ai-skills/SKILL_INDEX.md`.
 
 | # | Date | Documented approach | What actually works | Why / Context |
 |---|---|---|---|---|
@@ -550,7 +550,7 @@ When a process-level finding emerges -- something about how Salesforce documenta
 
 ## 12. Common AI Mistakes to Avoid (Process-Level)
 
-Reactive ledger -- each row records a mistake actually made by an AI agent or developer against the rules above, and the corrected approach. Component-specific mistakes (specific Apex / Flow / LWC patterns) go into the matching skill file per the routing table in [CLAUDE.md Section 6 CLAUDE.md).
+Reactive ledger -- each row records a mistake made against the rules above, and the corrected approach. Component-specific mistakes (specific Apex / Flow / LWC patterns) go into the matching skill file selected from `salesforce-ai-skills/SKILL_INDEX.md`.
 
 | # | Mistake | Correct approach |
 |---|---|---|
@@ -569,8 +569,8 @@ Reactive ledger -- each row records a mistake actually made by an AI agent or de
 | 16 | Omitting the sharing keyword from an Apex class | Implicit `without sharing` behaviour in most contexts; silent security regression (Section 4 1) |
 | 17 | Using Custom Settings for new configuration | Custom Metadata Types are the modern replacement -- deployable, subscribable, no sharing/visibility issues |
 | 18 | Writing multiple triggers for the same object | One trigger per object via handler class -- multiple triggers have non-deterministic execution order |
-| 19 | Activating new flows or deactivating old flows on the Salesforce delivery guidance project | Forbidden by CLAUDE.md Section 3 the release owner handles activation manually after test-environment validation. Deploy new flows as `Draft`. |
-| 20 | Hardcoding `apiVersion` (e.g. `<apiVersion>62.0</apiVersion>`) in component metadata | Read `currentApiVersion` from `project configuration` (currently `66.0`) -- bump in config on each release, never inline |
+| 19 | Activating new flows or deactivating old flows without explicit approval | Treat activation/deactivation as a human-gated release action. Prepare metadata safely, but do not activate or deactivate unless approved. |
+| 20 | Hardcoding `apiVersion` (e.g. `<apiVersion>62.0</apiVersion>`) in reusable examples | Use `<current-api-version>` or an explicitly labeled example, and require consuming projects to confirm their active API version. |
 
 ---
 
@@ -639,7 +639,7 @@ Authoritative sources for the rules in this file. When a rule here conflicts wit
 
 ---
 
-*Global AI Development Guidelines -- Master skill file | Reusable Salesforce Agent Guidelines | the release owner | Salesforce Developer*
+*Global AI Development Guidelines -- Master skill file | Reusable Salesforce Agent Guidelines*
 *Last verified 2026-05-16*
-*Attach to every AI agent session that touches Salesforce metadata, code, or configuration. Read CLAUDE.md alongside.*
+*Attach to agent sessions that touch Salesforce metadata, code, or configuration. Read root AGENTS.md and the relevant tool wrapper alongside it.*
 
